@@ -249,7 +249,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
             "|i - r| / (r + 0.01)\n\n"
 
             "RSE (Relative Squared Error)\n"
-            "(i - r)² / (r² + 0.01)"
+            "(i - r)² / (r² + 0.0001)"
         );
     }
 
@@ -455,13 +455,28 @@ bool ImageViewer::mouseButtonEvent(const Vector2i &p, int button, bool down, int
             mDraggingStartPosition = p.cast<float>();
             return true;
         } else if (mImageCanvas->contains(p)) {
-            mIsDraggingImage = true;
-            mDraggingStartPosition = p.cast<float>();
+            if ((modifiers & 2) != 0) {
+                if (button == 0) {
+                    // control click, do cropping
+                    mIsCroppingImage = true;
+                    mImageCanvas->mIsCropped = true;
+                    mImageCanvas->mCropMin =
+                    mImageCanvas->mCropMax =
+                    mImageCanvas->getImageCoords(*mCurrentImage, mousePos() - mImageCanvas->position());
+                } else {
+                    mIsCroppingImage = false;
+                    mImageCanvas->mIsCropped = false;
+                }
+            } else {
+                mIsDraggingImage = true;
+                mDraggingStartPosition = p.cast<float>();
+            }
             return true;
         }
     } else {
         mIsDraggingSidebar = false;
         mIsDraggingImage = false;
+        mIsCroppingImage = false;
     }
 
     return false;
@@ -501,6 +516,9 @@ bool ImageViewer::mouseMotionEvent(const Vector2i& p, const Vector2i& rel, int b
         if ((button & 4) != 0) {
             mImageCanvas->scale(relativeMovement.y() / 10.0f, mDraggingStartPosition);
         }
+    } else if (mIsCroppingImage) {
+        mImageCanvas->mCropMax =
+        mImageCanvas->getImageCoords(*mCurrentImage, mousePos() - mImageCanvas->position());
     }
 
     return false;

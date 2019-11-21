@@ -55,6 +55,17 @@ void ImageCanvas::drawGL() {
         return;
     }
 
+    Vector2f cropMin = mCropMin.cast<float>();
+    Vector2f cropMax = mCropMax.cast<float>();
+
+    if (cropMin.x() > cropMax.x()) std::swap(cropMin.x(), cropMax.x());
+    if (cropMin.y() > cropMax.y()) std::swap(cropMin.y(), cropMax.y());
+
+    cropMin.x() /= mImage->size().x();
+    cropMin.y() /= mImage->size().y();
+    cropMax.x() /= mImage->size().x();
+    cropMax.y() /= mImage->size().y();
+
     if (!mReference || glfwGetKey(glfwWindow, GLFW_KEY_LEFT_CONTROL) || image == mReference.get()) {
         mShader.draw(
             2.0f * mSize.cast<float>().cwiseInverse() / mPixelRatio,
@@ -66,7 +77,10 @@ void ImageCanvas::drawGL() {
             mExposure,
             mOffset,
             mGamma,
-            mTonemap
+            mTonemap,
+            mIsCropped,
+            cropMin,
+            cropMax
         );
         return;
     }
@@ -84,7 +98,10 @@ void ImageCanvas::drawGL() {
         mOffset,
         mGamma,
         mTonemap,
-        mMetric
+        mMetric,
+        mIsCropped,
+        cropMin,
+        cropMax
     );
 }
 
@@ -463,6 +480,15 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
         tfm::format("%d-%s-%d-%d", mImage->id(), channels, mReference->id(), mMetric) :
         tfm::format("%d-%s", mImage->id(), channels);
 
+    if (mIsCropped) {
+        key += std::string("-crop")
+            + "-" + std::to_string(mCropMin.x())
+            + "-" + std::to_string(mCropMin.y())
+            + "-" + std::to_string(mCropMax.x())
+            + "-" + std::to_string(mCropMax.y())
+        ;
+    }
+
     auto iter = mMeanValues.find(key);
     if (iter != end(mMeanValues)) {
         return iter->second;
@@ -471,8 +497,14 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
     auto image = mImage, reference = mReference;
     auto requestedLayer = mRequestedLayer;
     auto metric = mMetric;
-    mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([image, reference, requestedLayer, metric]() {
-        return computeCanvasStatistics(image, reference, requestedLayer, metric);
+    auto isCropped = mIsCropped;
+    auto cropMin = mCropMin;
+    auto cropMax = mCropMax;
+
+    mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([
+        image, reference, requestedLayer, metric, isCropped, cropMin, cropMax
+    ]() {
+        return computeCanvasStatistics(image, reference, requestedLayer, metric, isCropped, cropMin, cropMax);
     }, &mMeanValueThreadPool)));
 
     auto val = mMeanValues.at(key);
@@ -563,7 +595,10 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     std::shared_ptr<Image> image,
     std::shared_ptr<Image> reference,
     const std::string& requestedLayer,
-    EMetric metric
+    EMetric metric,
+    bool isCropped,
+    Vector2i cropMin,
+    Vector2i cropMax
 ) {
     auto flattened = channelsFromImages(image, reference, requestedLayer, metric);
 
@@ -588,16 +623,39 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
 
     int nChannels = alphaChannel ? (int)flattened.size() - 1 : (int)flattened.size();
 
+    if (!isCropped) {
+        cropMin = Vector2i(0, 0);
+        cropMax = image->size();
+    }
+
+    // @todo this is not the most efficient (or tidy) place to do these operations
+    //       do this before the lazy is evaluated!
+
+    if (cropMin.x() > cropMax.x()) std::swap(cropMin.x(), cropMax.x());
+    if (cropMin.y() > cropMax.y()) std::swap(cropMin.y(), cropMax.y());
+
+    cropMin = cropMin.array().min(image->size().array()).max(0);
+    cropMax = cropMax.array().min(image->size().array()).max(0);
+
+    int stride = image->size().x();
+    int cropSize = (cropMax.x() - cropMin.x()) * (cropMax.y() - cropMin.y());
     for (int i = 0; i < nChannels; ++i) {
         const auto& channel = flattened[i];
-        mean += channel.data().mean();
-        maximum = max(maximum, channel.data().maxCoeff());
-        minimum = min(minimum, channel.data().minCoeff());
+        for (int y = cropMin.y(); y < cropMax.y(); ++y) {
+            for (int x = cropMin.x(); x < cropMax.x(); ++x) {
+                DenseIndex j = x + y * stride;
+
+                auto v = channel.eval(j);
+                mean += v;
+                maximum = max(maximum, v);
+                minimum = min(minimum, v);
+            }
+        }
     }
 
     auto result = make_shared<CanvasStatistics>();
 
-    result->mean = nChannels > 0 ? (mean / nChannels) : 0;
+    result->mean = nChannels > 0 ? (mean / (nChannels * cropSize)) : 0;
     result->maximum = maximum;
     result->minimum = minimum;
 

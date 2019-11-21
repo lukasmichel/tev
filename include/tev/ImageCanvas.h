@@ -127,7 +127,10 @@ private:
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
         const std::string& requestedLayer,
-        EMetric metric
+        EMetric metric,
+        bool isCropped,
+        Eigen::Vector2i cropMin,
+        Eigen::Vector2i cropMax
     );
 
     Eigen::Vector2f pixelOffset(const Eigen::Vector2i& size) const;
@@ -156,6 +159,10 @@ private:
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mMeanValues;
     ThreadPool mMeanValueThreadPool;
+
+public:
+    bool mIsCropped = false;
+    Eigen::Vector2i mCropMin, mCropMax;
 };
 
 TEV_NAMESPACE_END

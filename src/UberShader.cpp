@@ -52,6 +52,10 @@ UberShader::UberShader()
         // Fragment shader
         R"(#version 330
 
+        uniform bool isCropped;
+        uniform vec2 cropMin;
+        uniform vec2 cropMax;
+
         uniform sampler2D image;
         uniform bool hasImage;
 
@@ -139,7 +143,17 @@ UberShader::UberShader()
                 return;
             }
 
+            float cropAlpha = 1.f;
+            if (isCropped) {
+                if (imageUv.x < cropMin.x
+                || imageUv.x > cropMax.x
+                || imageUv.y < cropMin.y
+                || imageUv.y > cropMax.y)
+                    cropAlpha = 0.3f;
+            }
+
             vec4 imageVal = sample(image, imageUv);
+            imageVal.a = imageVal.a * cropAlpha;
             if (!hasReference) {
                 color = vec4(
                     applyTonemap(applyExposureAndOffset(imageVal.rgb)) * imageVal.a +
@@ -150,6 +164,7 @@ UberShader::UberShader()
             }
 
             vec4 referenceVal = sample(reference, referenceUv);
+            referenceVal.a = referenceVal.a * cropAlpha;
 
             vec3 difference = imageVal.rgb - referenceVal.rgb;
             float alpha = (imageVal.a + referenceVal.a) * 0.5;
@@ -189,6 +204,9 @@ void UberShader::draw(const Vector2f& pixelSize, const Vector2f& checkerSize) {
     bindCheckerboardData(pixelSize, checkerSize);
     mShader.setUniform("hasImage", false);
     mShader.setUniform("hasReference", false);
+    mShader.setUniform("isCropped", false);
+    mShader.setUniform("cropMin", (Vector2f)Vector2f::Constant(0.f));
+    mShader.setUniform("cropMax", (Vector2f)Vector2f::Constant(0.f));
     mShader.drawIndexed(GL_TRIANGLES, 0, 2);
 }
 
@@ -200,13 +218,19 @@ void UberShader::draw(
     float exposure,
     float offset,
     float gamma,
-    ETonemap tonemap
+    ETonemap tonemap,
+    bool isCropped,
+    const Vector2f& cropMin,
+    const Vector2f& cropMax
 ) {
     mShader.bind();
     bindCheckerboardData(pixelSize, checkerSize);
     bindImageData(textureImage, transformImage, exposure, offset, gamma, tonemap);
     mShader.setUniform("hasImage", true);
     mShader.setUniform("hasReference", false);
+    mShader.setUniform("isCropped", isCropped);
+    mShader.setUniform("cropMin", cropMin);
+    mShader.setUniform("cropMax", cropMax);
     mShader.drawIndexed(GL_TRIANGLES, 0, 2);
 }
 
@@ -221,7 +245,10 @@ void UberShader::draw(
     float offset,
     float gamma,
     ETonemap tonemap,
-    EMetric metric
+    EMetric metric,
+    bool isCropped,
+    const Vector2f& cropMin,
+    const Vector2f& cropMax
 ) {
     mShader.bind();
     bindCheckerboardData(pixelSize, checkerSize);
@@ -229,6 +256,9 @@ void UberShader::draw(
     bindReferenceData(textureReference, transformReference, metric);
     mShader.setUniform("hasImage", true);
     mShader.setUniform("hasReference", true);
+    mShader.setUniform("isCropped", isCropped);
+    mShader.setUniform("cropMin", cropMin);
+    mShader.setUniform("cropMax", cropMax);
     mShader.drawIndexed(GL_TRIANGLES, 0, 2);
 }
 

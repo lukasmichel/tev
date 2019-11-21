@@ -200,7 +200,8 @@ private:
 
     bool mIsDraggingSidebar = false;
     bool mIsDraggingImage = false;
-
+    bool mIsCroppingImage = false;
+    
     Eigen::Vector2f mDraggingStartPosition;
 };
 

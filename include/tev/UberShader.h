@@ -26,7 +26,10 @@ public:
         float exposure,
         float offset,
         float gamma,
-        ETonemap tonemap
+        ETonemap tonemap,
+        bool isCropped,
+        const Eigen::Vector2f& cropMin,
+        const Eigen::Vector2f& cropMax
     );
 
     // Draws a difference between a reference and an image.
@@ -41,7 +44,10 @@ public:
         float offset,
         float gamma,
         ETonemap tonemap,
-        EMetric metric
+        EMetric metric,
+        bool isCropped,
+        const Eigen::Vector2f& cropMin,
+        const Eigen::Vector2f& cropMax
     );
 
     const nanogui::Color& backgroundColor() {
