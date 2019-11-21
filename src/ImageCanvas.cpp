@@ -248,6 +248,8 @@ vector<string> ImageCanvas::getChannels(const Image& image, const string& reques
             const auto& name = layerPrefix + group[i];
             if (image.hasChannel(name)) {
                 result.emplace_back(name);
+            } else if (image.hasChannel(group[i])) {
+                result.emplace_back(group[i]);
             }
         }
 
