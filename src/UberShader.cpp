@@ -22,6 +22,7 @@ UberShader::UberShader()
     mShader.define("SQUARED_ERROR",           to_string(EMetric::SquaredError));
     mShader.define("RELATIVE_ABSOLUTE_ERROR", to_string(EMetric::RelativeAbsoluteError));
     mShader.define("RELATIVE_SQUARED_ERROR",  to_string(EMetric::RelativeSquaredError));
+    mShader.define("DIVISION",                to_string(EMetric::Division));
 
     mShader.init(
         "ubershader",
@@ -114,13 +115,15 @@ UberShader::UberShader()
             return vec3(0.0);
         }
 
-        vec3 applyMetric(vec3 col, vec3 reference) {
+        vec3 applyMetric(vec3 image, vec3 reference) {
+            vec3 col = image - reference;
             switch (metric) {
                 case ERROR:                   return col;
                 case ABSOLUTE_ERROR:          return abs(col);
                 case SQUARED_ERROR:           return col * col;
-                case RELATIVE_ABSOLUTE_ERROR: return abs(col) / (reference + vec3(0.01));
-                case RELATIVE_SQUARED_ERROR:  return col * col / (reference * reference + vec3(0.01));
+                case RELATIVE_ABSOLUTE_ERROR: return abs(col) / (reference + vec3(0.001));
+                case RELATIVE_SQUARED_ERROR:  return col * col / (reference * reference + vec3(0.001));
+                case DIVISION:                return (image + vec3(0.001)) / (reference + vec3(0.001));
             }
             return vec3(0.0);
         }
@@ -166,10 +169,9 @@ UberShader::UberShader()
             vec4 referenceVal = sample(reference, referenceUv);
             referenceVal.a = referenceVal.a * cropAlpha;
 
-            vec3 difference = imageVal.rgb - referenceVal.rgb;
             float alpha = (imageVal.a + referenceVal.a) * 0.5;
             color = vec4(
-                applyTonemap(applyExposureAndOffset(applyMetric(difference, referenceVal.rgb))) * alpha +
+                applyTonemap(applyExposureAndOffset(applyMetric(imageVal.rgb, referenceVal.rgb))) * alpha +
                 checker * (1.0 - alpha),
                 1.0
             );

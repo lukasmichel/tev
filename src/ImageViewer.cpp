@@ -42,7 +42,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
     horizontalScreenSplit->setLayout(new BoxLayout{Orientation::Horizontal, Alignment::Fill});
 
     mSidebar = new Widget{horizontalScreenSplit};
-    mSidebar->setFixedWidth(205);
+    mSidebar->setFixedWidth(240);
 
     mHelpButton = new Button{mSidebar, "", ENTYPO_ICON_HELP};
     mHelpButton->setCallback([this]() { toggleHelpWindow(); });
@@ -214,7 +214,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
     // Error metrics
     {
         mMetricButtonContainer = new Widget{mSidebarLayout};
-        mMetricButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 5, 2});
+        mMetricButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
 
         auto makeMetricButton = [&](const string& name, function<void()> callback) {
             auto button = new Button{mMetricButtonContainer, name};
@@ -229,6 +229,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
         makeMetricButton("SE",  [this]() { setMetric(EMetric::SquaredError); });
         makeMetricButton("RAE", [this]() { setMetric(EMetric::RelativeAbsoluteError); });
         makeMetricButton("RSE", [this]() { setMetric(EMetric::RelativeSquaredError); });
+        makeMetricButton("DIV", [this]() { setMetric(EMetric::Division); });
 
         setMetric(EMetric::AbsoluteError);
 
@@ -496,7 +497,7 @@ bool ImageViewer::mouseMotionEvent(const Vector2i& p, const Vector2i& rel, int b
     }
 
     if (mIsDraggingSidebar) {
-        mSidebar->setFixedWidth(clamp(p.x(), 205, mSize.x() - 10));
+        mSidebar->setFixedWidth(clamp(p.x(), 240, mSize.x() - 10));
         requestLayoutUpdate();
     } else if (mIsDraggingImage) {
         Vector2f relativeMovement = rel.cast<float>();
