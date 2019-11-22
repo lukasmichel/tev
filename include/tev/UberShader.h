@@ -27,6 +27,7 @@ public:
         float offset,
         float gamma,
         ETonemap tonemap,
+        EPostProcessing postProcessing,
         bool isCropped,
         const Eigen::Vector2f& cropMin,
         const Eigen::Vector2f& cropMax
@@ -45,6 +46,7 @@ public:
         float gamma,
         ETonemap tonemap,
         EMetric metric,
+        EPostProcessing postProcessing,
         bool isCropped,
         const Eigen::Vector2f& cropMin,
         const Eigen::Vector2f& cropMax

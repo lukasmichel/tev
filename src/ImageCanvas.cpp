@@ -78,6 +78,7 @@ void ImageCanvas::drawGL() {
             mOffset,
             mGamma,
             mTonemap,
+            mPostProcessing,
             mIsCropped,
             cropMin,
             cropMax
@@ -99,6 +100,7 @@ void ImageCanvas::drawGL() {
         mGamma,
         mTonemap,
         mMetric,
+        mPostProcessing,
         mIsCropped,
         cropMin,
         cropMax
@@ -326,6 +328,10 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
             result[i] = applyMetric(result[i], reference);
         }
     }
+
+    for (size_t i = 0; i < result.size(); ++i) {
+        result[i] = applyPostProcessing(result[i]);
+    }
 }
 
 Vector3f ImageCanvas::applyTonemap(const Vector3f& value, float gamma, ETonemap tonemap) {
@@ -378,6 +384,15 @@ float ImageCanvas::applyMetric(float image, float reference, EMetric metric) {
     }
 }
 
+float ImageCanvas::applyPostProcessing(float image, EPostProcessing postProcessing) {
+    switch (postProcessing) {
+        case EPostProcessing::Identity: return image;
+        case EPostProcessing::Square:   return image * image;
+        default:
+            throw runtime_error{"Invalid post processing selected."};
+    }
+}
+
 void ImageCanvas::fitImageToScreen(const Image& image) {
     Vector2f nanoguiImageSize = image.size().cast<float>() / mPixelRatio;
     mTransform = Scaling(mSize.cast<float>().cwiseQuotient(nanoguiImageSize).minCoeff());
@@ -392,7 +407,7 @@ void ImageCanvas::saveImage(const path& path) {
         return;
     }
 
-    const auto& channels = channelsFromImages(mImage, mReference, mRequestedLayer, mMetric);
+    const auto& channels = channelsFromImages(mImage, mReference, mRequestedLayer, mMetric, mPostProcessing);
     Vector2i imageSize = mImage->size();
     auto numPixels = mImage->count();
 
@@ -480,8 +495,8 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
 
     string channels = join(getChannels(*mImage), ",");
     string key = mReference ?
-        tfm::format("%d-%s-%d-%d", mImage->id(), channels, mReference->id(), mMetric) :
-        tfm::format("%d-%s", mImage->id(), channels);
+        tfm::format("%d-%s-%d-%d-%d", mImage->id(), channels, mReference->id(), mMetric, mPostProcessing) :
+        tfm::format("%d-%s-%d", mImage->id(), channels, mPostProcessing);
 
     if (mIsCropped) {
         key += std::string("-crop")
@@ -500,14 +515,21 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
     auto image = mImage, reference = mReference;
     auto requestedLayer = mRequestedLayer;
     auto metric = mMetric;
+    auto postProcessing = mPostProcessing;
     auto isCropped = mIsCropped;
     auto cropMin = mCropMin;
     auto cropMax = mCropMax;
 
     mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([
-        image, reference, requestedLayer, metric, isCropped, cropMin, cropMax
+        image, reference,
+        requestedLayer, metric, postProcessing,
+        isCropped, cropMin, cropMax
     ]() {
-        return computeCanvasStatistics(image, reference, requestedLayer, metric, isCropped, cropMin, cropMax);
+        return computeCanvasStatistics(
+            image, reference, requestedLayer,
+            metric, postProcessing,
+            isCropped, cropMin, cropMax
+        );
     }, &mMeanValueThreadPool)));
 
     auto val = mMeanValues.at(key);
@@ -519,7 +541,8 @@ vector<Channel> ImageCanvas::channelsFromImages(
     shared_ptr<Image> image,
     shared_ptr<Image> reference,
     const string& requestedLayer,
-    EMetric metric
+    EMetric metric,
+    EPostProcessing postProcessing
 ) {
     if (!image) {
         return {};
@@ -538,7 +561,7 @@ vector<Channel> ImageCanvas::channelsFromImages(
         pool.parallelFor(0, (int)channelNames.size(), [&](int i) {
             const auto* chan = image->channel(channelNames[i]);
             for (DenseIndex j = 0; j < chan->count(); ++j) {
-                result[i].at(j) = chan->eval(j);
+                result[i].at(j) = ImageCanvas::applyPostProcessing(chan->eval(j), postProcessing);
             }
         });
     } else {
@@ -565,10 +588,13 @@ vector<Channel> ImageCanvas::channelsFromImages(
                 } else {
                     for (int y = 0; y < size.y(); ++y) {
                         for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyMetric(
-                                chan->eval({x, y}),
-                                referenceChan->eval({x + offset.x(), y + offset.y()}),
-                                metric
+                            result[i].at({x, y}) = ImageCanvas::applyPostProcessing(
+                                ImageCanvas::applyMetric(
+                                    chan->eval({x, y}),
+                                    referenceChan->eval({x + offset.x(), y + offset.y()}),
+                                    metric
+                                ),
+                                postProcessing
                             );
                         }
                     }
@@ -583,7 +609,10 @@ vector<Channel> ImageCanvas::channelsFromImages(
                 } else {
                     for (int y = 0; y < size.y(); ++y) {
                         for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyMetric(chan->eval({x, y}), 0, metric);
+                            result[i].at({x, y}) = ImageCanvas::applyPostProcessing(
+                                ImageCanvas::applyMetric(chan->eval({x, y}), 0, metric),
+                                postProcessing
+                            );
                         }
                     }
                 }
@@ -599,11 +628,12 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     std::shared_ptr<Image> reference,
     const std::string& requestedLayer,
     EMetric metric,
+    EPostProcessing postProcessing,
     bool isCropped,
     Vector2i cropMin,
     Vector2i cropMax
 ) {
-    auto flattened = channelsFromImages(image, reference, requestedLayer, metric);
+    auto flattened = channelsFromImages(image, reference, requestedLayer, metric, postProcessing);
 
     float mean = 0;
     float maximum = -numeric_limits<float>::infinity();

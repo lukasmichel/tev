@@ -87,6 +87,12 @@ public:
 
     void setMetric(EMetric metric);
 
+    EPostProcessing postProcessing() {
+        return mImageCanvas->postProcessing();
+    }
+
+    void setPostProcessing(EPostProcessing postProcessing);
+
     void resizeToFitImage(const std::shared_ptr<Image>& image);
     void resizeToFitAllImages();
     bool setFilter(const std::string& filter);
@@ -163,6 +169,7 @@ private:
 
     nanogui::Widget* mTonemapButtonContainer;
     nanogui::Widget* mMetricButtonContainer;
+    nanogui::Widget* mPostProcButtonContainer;
 
     std::shared_ptr<BackgroundImagesLoader> mImagesLoader;
 

@@ -95,9 +95,22 @@ public:
         mMetric = metric;
     }
 
-    static float applyMetric(float value, float reference, EMetric metric);
+    EPostProcessing postProcessing() const {
+        return mPostProcessing;
+    }
+
+    void setPostProcessing(EPostProcessing postProcessing) {
+        mPostProcessing = postProcessing;
+    }
+
+   static float applyMetric(float value, float reference, EMetric metric);
     float applyMetric(float value, float reference) const {
         return applyMetric(value, reference, mMetric);
+    }
+
+    static float applyPostProcessing(float value, EPostProcessing postProcessing);
+    float applyPostProcessing(float value) const {
+        return applyPostProcessing(value, mPostProcessing);
     }
 
     const nanogui::Color& backgroundColor() {
@@ -120,7 +133,8 @@ private:
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
         const std::string& requestedLayer,
-        EMetric metric
+        EMetric metric,
+        EPostProcessing postProcessing
     );
 
     static std::shared_ptr<CanvasStatistics> computeCanvasStatistics(
@@ -128,6 +142,7 @@ private:
         std::shared_ptr<Image> reference,
         const std::string& requestedLayer,
         EMetric metric,
+        EPostProcessing postProcessing,
         bool isCropped,
         Eigen::Vector2i cropMin,
         Eigen::Vector2i cropMax
@@ -156,6 +171,7 @@ private:
 
     ETonemap mTonemap = SRGB;
     EMetric mMetric = Error;
+    EPostProcessing mPostProcessing = Identity;
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mMeanValues;
     ThreadPool mMeanValueThreadPool;

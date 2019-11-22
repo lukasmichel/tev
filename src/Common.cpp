@@ -165,6 +165,18 @@ EMetric toMetric(string name) {
     }
 }
 
+EPostProcessing toPostProcessing(string name) {
+    // Perform matching on uppercase strings
+    name = toUpper(name);
+    if (name == "NONE") {
+        return Identity;
+    } else if (name == "SQR") {
+        return Square;
+    } else {
+        return Identity;
+    }
+}
+
 int lastError() {
 #ifdef _WIN32
     return GetLastError();

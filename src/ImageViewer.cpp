@@ -214,7 +214,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
     // Error metrics
     {
         mMetricButtonContainer = new Widget{mSidebarLayout};
-        mMetricButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
+        mMetricButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, NumMetrics, Alignment::Fill, 5, 2});
 
         auto makeMetricButton = [&](const string& name, function<void()> callback) {
             auto button = new Button{mMetricButtonContainer, name};
@@ -247,10 +247,42 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
             "(i - r)²\n\n"
 
             "RAE (Relative Absolute Error)\n"
-            "|i - r| / (r + 0.01)\n\n"
+            "|i - r| / (r + 0.001)\n\n"
 
             "RSE (Relative Squared Error)\n"
-            "(i - r)² / (r² + 0.0001)"
+            "(i - r)² / (r² + 0.001)\n\n"
+
+            "DIV (Division)\n"
+            "(i + 0.001) / (r + 0.001)"
+        );
+    }
+
+    // Post processing
+    {
+        mPostProcButtonContainer = new Widget{mSidebarLayout};
+        mPostProcButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, NumPostProcessing, Alignment::Fill, 5, 2});
+
+        auto makePostProcButton = [&](const string& name, function<void()> callback) {
+            auto button = new Button{mPostProcButtonContainer, name};
+            button->setFlags(Button::RadioButton);
+            button->setFontSize(15);
+            button->setCallback(callback);
+            return button;
+        };
+
+        makePostProcButton("NONE", [this]() { setPostProcessing(EPostProcessing::Identity); });
+        makePostProcButton("SQR",  [this]() { setPostProcessing(EPostProcessing::Square); });
+
+        setPostProcessing(EPostProcessing::Identity);
+
+        mPostProcButtonContainer->setTooltip(
+            "Post processing selection. The following operators are available:\n\n"
+
+            "NONE (Identity)\n"
+            "i\n\n"
+
+            "SQR (Squared image)\n"
+            "i^2"
         );
     }
 
@@ -1190,6 +1222,15 @@ void ImageViewer::setMetric(EMetric metric) {
     for (size_t i = 0; i < buttons.size(); ++i) {
         Button* b = dynamic_cast<Button*>(buttons[i]);
         b->setPushed((EMetric)i == metric);
+    }
+}
+
+void ImageViewer::setPostProcessing(EPostProcessing postProcessing) {
+    mImageCanvas->setPostProcessing(postProcessing);
+    auto& buttons = mPostProcButtonContainer->children();
+    for (size_t i = 0; i < buttons.size(); ++i) {
+        Button* b = dynamic_cast<Button*>(buttons[i]);
+        b->setPushed((EPostProcessing)i == postProcessing);
     }
 }
 

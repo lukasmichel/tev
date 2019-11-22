@@ -80,8 +80,16 @@ int mainFunc(const vector<string>& arguments) {
         "SE  - Squared Error\n"
         "RAE - Relative Absolute Error\n"
         "RSE - Relative Squared Error\n"
+        "DIV - Division\n"
         "Default is E.",
         {'m', "metric"},
+    };
+
+    ValueFlag<string> postProcessingFlag{
+        parser,
+        "POSTPROC",
+        "The post processing to use.",
+        {'p', "post"},
     };
 
     Flag newWindowFlag{
@@ -268,6 +276,7 @@ int mainFunc(const vector<string>& arguments) {
         if (filterFlag)   { app->setFilter(get(filterFlag)); }
         if (gammaFlag)    { app->setGamma(get(gammaFlag)); }
         if (metricFlag)   { app->setMetric(toMetric(get(metricFlag))); }
+        if (postProcessingFlag) { app->setPostProcessing(toPostProcessing(get(postProcessingFlag))); }
         if (offsetFlag)   { app->setOffset(get(offsetFlag)); }
         if (tonemapFlag)  { app->setTonemap(toTonemap(get(tonemapFlag))); }
 

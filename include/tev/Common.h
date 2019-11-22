@@ -199,7 +199,17 @@ enum EMetric : int {
     NumMetrics,
 };
 
+enum EPostProcessing : int {
+    Identity = 0,
+    Square,
+
+    // This enum value should never be used directly.
+    // It facilitates looping over all members of this enum.
+    NumPostProcessing,
+};
+
 EMetric toMetric(std::string name);
+EPostProcessing toPostProcessing(std::string name);
 
 enum EDirection {
     Forward,

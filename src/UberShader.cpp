@@ -24,6 +24,9 @@ UberShader::UberShader()
     mShader.define("RELATIVE_SQUARED_ERROR",  to_string(EMetric::RelativeSquaredError));
     mShader.define("DIVISION",                to_string(EMetric::Division));
 
+    mShader.define("IDENTITY",                to_string(EPostProcessing::Identity));
+    mShader.define("SQUARE",                  to_string(EPostProcessing::Square));
+
     mShader.init(
         "ubershader",
 
@@ -70,6 +73,7 @@ UberShader::UberShader()
         uniform float gamma;
         uniform int tonemap;
         uniform int metric;
+        uniform int postProcessing;
 
         uniform vec4 bgColor;
 
@@ -128,6 +132,14 @@ UberShader::UberShader()
             return vec3(0.0);
         }
 
+        vec3 applyPostProcessing(vec3 image) {
+            switch (postProcessing) {
+                case IDENTITY: return image;
+                case SQUARE:   return image * image;
+            }
+            return vec3(0.0);
+        }
+
         vec4 sample(sampler2D sampler, vec2 uv) {
             if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
                 return vec4(0.0);
@@ -159,7 +171,11 @@ UberShader::UberShader()
             imageVal.a = imageVal.a * cropAlpha;
             if (!hasReference) {
                 color = vec4(
-                    applyTonemap(applyExposureAndOffset(imageVal.rgb)) * imageVal.a +
+                    applyTonemap(
+                        applyExposureAndOffset(
+                            applyPostProcessing(imageVal.rgb)
+                        )
+                    ) * imageVal.a +
                     checker * (1.0 - imageVal.a),
                     1.0
                 );
@@ -171,7 +187,13 @@ UberShader::UberShader()
 
             float alpha = (imageVal.a + referenceVal.a) * 0.5;
             color = vec4(
-                applyTonemap(applyExposureAndOffset(applyMetric(imageVal.rgb, referenceVal.rgb))) * alpha +
+                applyTonemap(
+                    applyExposureAndOffset(
+                        applyPostProcessing(
+                            applyMetric(imageVal.rgb, referenceVal.rgb)
+                        )
+                    )
+                ) * alpha +
                 checker * (1.0 - alpha),
                 1.0
             );
@@ -205,6 +227,7 @@ void UberShader::draw(const Vector2f& pixelSize, const Vector2f& checkerSize) {
     mShader.bind();
     bindCheckerboardData(pixelSize, checkerSize);
     mShader.setUniform("hasImage", false);
+    mShader.setUniform("postProcessing", static_cast<int>(EPostProcessing::Identity));
     mShader.setUniform("hasReference", false);
     mShader.setUniform("isCropped", false);
     mShader.setUniform("cropMin", (Vector2f)Vector2f::Constant(0.f));
@@ -221,6 +244,7 @@ void UberShader::draw(
     float offset,
     float gamma,
     ETonemap tonemap,
+    EPostProcessing postProcessing,
     bool isCropped,
     const Vector2f& cropMin,
     const Vector2f& cropMax
@@ -229,6 +253,7 @@ void UberShader::draw(
     bindCheckerboardData(pixelSize, checkerSize);
     bindImageData(textureImage, transformImage, exposure, offset, gamma, tonemap);
     mShader.setUniform("hasImage", true);
+    mShader.setUniform("postProcessing", static_cast<int>(postProcessing));
     mShader.setUniform("hasReference", false);
     mShader.setUniform("isCropped", isCropped);
     mShader.setUniform("cropMin", cropMin);
@@ -248,6 +273,7 @@ void UberShader::draw(
     float gamma,
     ETonemap tonemap,
     EMetric metric,
+    EPostProcessing postProcessing,
     bool isCropped,
     const Vector2f& cropMin,
     const Vector2f& cropMax
@@ -257,6 +283,7 @@ void UberShader::draw(
     bindImageData(textureImage, transformImage, exposure, offset, gamma, tonemap);
     bindReferenceData(textureReference, transformReference, metric);
     mShader.setUniform("hasImage", true);
+    mShader.setUniform("postProcessing", static_cast<int>(postProcessing));
     mShader.setUniform("hasReference", true);
     mShader.setUniform("isCropped", isCropped);
     mShader.setUniform("cropMin", cropMin);
