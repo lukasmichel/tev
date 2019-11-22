@@ -671,7 +671,7 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     cropMax = cropMax.array().min(image->size().array()).max(0);
 
     int stride = image->size().x();
-    int cropSize = (cropMax.x() - cropMin.x()) * (cropMax.y() - cropMin.y());
+    int pixelCount = 0;
     for (int i = 0; i < nChannels; ++i) {
         const auto& channel = flattened[i];
         for (int y = cropMin.y(); y < cropMax.y(); ++y) {
@@ -679,16 +679,19 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
                 DenseIndex j = x + y * stride;
 
                 auto v = channel.eval(j);
-                mean += v;
-                maximum = max(maximum, v);
-                minimum = min(minimum, v);
+                if (!isnan(v)) {
+                    mean += v;
+                    maximum = max(maximum, v);
+                    minimum = min(minimum, v);
+                    pixelCount++;
+                }
             }
         }
     }
 
     auto result = make_shared<CanvasStatistics>();
 
-    result->mean = nChannels > 0 ? (mean / (nChannels * cropSize)) : 0;
+    result->mean = nChannels > 0 ? (mean / pixelCount) : 0;
     result->maximum = maximum;
     result->minimum = minimum;
 
