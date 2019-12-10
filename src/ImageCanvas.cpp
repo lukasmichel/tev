@@ -388,6 +388,8 @@ float ImageCanvas::applyPostProcessing(float image, EPostProcessing postProcessi
     switch (postProcessing) {
         case EPostProcessing::Identity: return image;
         case EPostProcessing::Square:   return image * image;
+        case EPostProcessing::Clip10:   return std::min(image, 10.f);
+        case EPostProcessing::Clip100:  return std::min(image, 100.f);
         default:
             throw runtime_error{"Invalid post processing selected."};
     }

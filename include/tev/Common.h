@@ -202,6 +202,8 @@ enum EMetric : int {
 enum EPostProcessing : int {
     Identity = 0,
     Square,
+    Clip10,
+    Clip100,
 
     // This enum value should never be used directly.
     // It facilitates looping over all members of this enum.

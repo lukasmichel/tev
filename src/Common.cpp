@@ -172,6 +172,10 @@ EPostProcessing toPostProcessing(string name) {
         return Identity;
     } else if (name == "SQR") {
         return Square;
+    } else if (name == "C10") {
+        return Clip10;
+    } else if (name == "C100") {
+        return Clip100;
     } else {
         return Identity;
     }

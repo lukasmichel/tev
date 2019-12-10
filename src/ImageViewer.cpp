@@ -272,6 +272,8 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
 
         makePostProcButton("NONE", [this]() { setPostProcessing(EPostProcessing::Identity); });
         makePostProcButton("SQR",  [this]() { setPostProcessing(EPostProcessing::Square); });
+        makePostProcButton("C10",  [this]() { setPostProcessing(EPostProcessing::Clip10); });
+        makePostProcButton("C100", [this]() { setPostProcessing(EPostProcessing::Clip100); });
 
         setPostProcessing(EPostProcessing::Identity);
 

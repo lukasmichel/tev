@@ -26,6 +26,8 @@ UberShader::UberShader()
 
     mShader.define("IDENTITY",                to_string(EPostProcessing::Identity));
     mShader.define("SQUARE",                  to_string(EPostProcessing::Square));
+    mShader.define("CLIP10",                  to_string(EPostProcessing::Clip10));
+    mShader.define("CLIP100",                 to_string(EPostProcessing::Clip100));
 
     mShader.init(
         "ubershader",
@@ -136,6 +138,8 @@ UberShader::UberShader()
             switch (postProcessing) {
                 case IDENTITY: return image;
                 case SQUARE:   return image * image;
+                case CLIP10:   return min(image, 10.f);
+                case CLIP100:  return min(image, 100.f);
             }
             return vec3(0.0);
         }
