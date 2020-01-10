@@ -161,7 +161,7 @@ void ImageCanvas::draw(NVGcontext *ctx) {
                     for (size_t i = 0; i < colors.size(); ++i) {
                         string str;
                         Vector2f pos;
-                        
+
                         if (altHeld) {
                             float tonemappedValue = Channel::tail(channels[i]) == "A" ? values[i] : toSRGB(values[i]);
                             unsigned char discretizedValue = (char)(tonemappedValue * 255 + 0.5f);
@@ -355,7 +355,7 @@ Vector3f ImageCanvas::applyTonemap(const Vector3f& value, float gamma, ETonemap 
                     return Vector3f{fcd[start], fcd[start + 1], fcd[start + 2]};
                 };
 
-                result = falseColor(log2(value.mean()) / 10 + 0.5f);
+                result = falseColor(value.mean());
                 break;
             }
         case ETonemap::PositiveNegative:
