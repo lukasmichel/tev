@@ -94,6 +94,7 @@ UberShader::UberShader()
         }
 
         vec3 falseColor(float v) {
+            v = log(v) / log(1000000);
             v = clamp(v, 0.0, 1.0);
             return texture(colormap, vec2(v, 0.5)).rgb;
         }
