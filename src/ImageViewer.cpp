@@ -177,7 +177,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
     // Tonemap options
     {
         mTonemapButtonContainer = new Widget{mSidebarLayout};
-        mTonemapButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 5, 2});
+        mTonemapButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 5, 2});
 
         auto makeTonemapButton = [&](const string& name, function<void()> callback) {
             auto button = new Button{mTonemapButtonContainer, name};
@@ -191,6 +191,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
         makeTonemapButton("Gamma", [this]() { setTonemap(ETonemap::Gamma); });
         makeTonemapButton("FC",    [this]() { setTonemap(ETonemap::FalseColor); });
         makeTonemapButton("+/-",   [this]() { setTonemap(ETonemap::PositiveNegative); });
+        makeTonemapButton("C",     [this]() { setTonemap(ETonemap::Complex); });
 
         setTonemap(ETonemap::SRGB);
 
@@ -274,6 +275,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
         makePostProcButton("SQR",  [this]() { setPostProcessing(EPostProcessing::Square); });
         makePostProcButton("C10",  [this]() { setPostProcessing(EPostProcessing::Clip10); });
         makePostProcButton("C100", [this]() { setPostProcessing(EPostProcessing::Clip100); });
+        makePostProcButton("MAG",  [this]() { setPostProcessing(EPostProcessing::Magnitude); });
 
         setPostProcessing(EPostProcessing::Identity);
 

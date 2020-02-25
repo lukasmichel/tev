@@ -140,6 +140,8 @@ ETonemap toTonemap(string name) {
         return FalseColor;
     } else if (name == "POSITIVENEGATIVE" || name == "POSNEG" || name == "PN" ||name == "+-") {
         return PositiveNegative;
+    } else if (name == "COMPLEX") {
+        return Complex;
     } else {
         return SRGB;
     }
@@ -176,6 +178,8 @@ EPostProcessing toPostProcessing(string name) {
         return Clip10;
     } else if (name == "C100") {
         return Clip100;
+    } else if (name == "MAG") {
+        return Magnitude;
     } else {
         return Identity;
     }

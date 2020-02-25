@@ -16,6 +16,7 @@ UberShader::UberShader()
     mShader.define("GAMMA",       to_string(ETonemap::Gamma));
     mShader.define("FALSE_COLOR", to_string(ETonemap::FalseColor));
     mShader.define("POS_NEG",     to_string(ETonemap::PositiveNegative));
+    mShader.define("COMPLEX",     to_string(ETonemap::Complex));
 
     mShader.define("ERROR",                   to_string(EMetric::Error));
     mShader.define("ABSOLUTE_ERROR",          to_string(EMetric::AbsoluteError));
@@ -28,6 +29,9 @@ UberShader::UberShader()
     mShader.define("SQUARE",                  to_string(EPostProcessing::Square));
     mShader.define("CLIP10",                  to_string(EPostProcessing::Clip10));
     mShader.define("CLIP100",                 to_string(EPostProcessing::Clip100));
+    mShader.define("MAGNITUDE",               to_string(EPostProcessing::Magnitude));
+
+    mShader.define("M_PI", to_string(M_PI));
 
     mShader.init(
         "ubershader",
@@ -94,7 +98,7 @@ UberShader::UberShader()
         }
 
         vec3 falseColor(float v) {
-            v = log(v) / log(1000000);
+            v = log(v) / log(1000000.0);
             v = clamp(v, 0.0, 1.0);
             return texture(colormap, vec2(v, 0.5)).rgb;
         }
@@ -111,8 +115,16 @@ UberShader::UberShader()
             }
         }
 
+        vec3 hsl2rgb(vec3 c) {
+            vec3 rgb = clamp( abs(mod(c.x*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0 );
+            return c.z + c.y * (rgb-0.5)*(1.0-abs(2.0*c.z-1.0));
+        }
+
         vec3 applyTonemap(vec3 col) {
             switch (tonemap) {
+                case COMPLEX:     return hsl2rgb(vec3(
+                    atan(col.y, col.x) / (2.0*M_PI), 1.0, 1.0 - pow(0.5, length(col))
+                ));
                 case SRGB:        return vec3(sRGB(col.r), sRGB(col.g), sRGB(col.b));
                 case GAMMA:       return pow(col, vec3(1.0 / gamma));
                 // Here grayscale is compressed such that the darkest color is is 1/1024th as bright as the brightest color.
@@ -137,10 +149,11 @@ UberShader::UberShader()
 
         vec3 applyPostProcessing(vec3 image) {
             switch (postProcessing) {
-                case IDENTITY: return image;
-                case SQUARE:   return image * image;
-                case CLIP10:   return min(image, 10.f);
-                case CLIP100:  return min(image, 100.f);
+                case IDENTITY:  return image;
+                case SQUARE:    return image * image;
+                case CLIP10:    return min(image, 10.f);
+                case CLIP100:   return min(image, 100.f);
+                case MAGNITUDE: return vec3(length(image));
             }
             return vec3(0.0);
         }
@@ -194,8 +207,9 @@ UberShader::UberShader()
             color = vec4(
                 applyTonemap(
                     applyExposureAndOffset(
-                        applyPostProcessing(
-                            applyMetric(imageVal.rgb, referenceVal.rgb)
+                        applyMetric(
+                            applyPostProcessing(imageVal.rgb),
+                            applyPostProcessing(referenceVal.rgb)
                         )
                     )
                 ) * alpha +

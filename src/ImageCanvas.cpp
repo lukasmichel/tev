@@ -232,6 +232,7 @@ float ImageCanvas::applyExposureAndOffset(float value) {
 
 vector<string> ImageCanvas::getChannels(const Image& image, const string& requestedLayer) {
     vector<vector<string>> groups = {
+        { "Re", "Im" },
         { "R", "G", "B" },
         { "r", "g", "b" },
         { "X", "Y", "Z" },
@@ -325,12 +326,11 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
                 mReference->channel(referenceChannels[i])->eval(referenceCoords) :
                 0.0f;
 
-            result[i] = applyMetric(result[i], reference);
+            result[i] = applyMetric(
+                applyPostProcessing(result[i]),
+                applyPostProcessing(reference)
+            );
         }
-    }
-
-    for (size_t i = 0; i < result.size(); ++i) {
-        result[i] = applyPostProcessing(result[i]);
     }
 }
 
@@ -375,6 +375,11 @@ Vector3f ImageCanvas::applyTonemap(const Vector3f& value, float gamma, ETonemap 
                 result = {-2.0f * value.cwiseMin(Vector3f::Zero()).mean(), 2.0f * value.cwiseMax(Vector3f::Zero()).mean(), 0.0f};
                 break;
             }
+        case ETonemap::Complex:
+            {
+                result = {0.f, 0.f, 0.0f};
+                break;
+            }
         default:
             throw runtime_error{"Invalid tonemap selected."};
     }
@@ -398,10 +403,10 @@ float ImageCanvas::applyMetric(float image, float reference, EMetric metric) {
 
 float ImageCanvas::applyPostProcessing(float image, EPostProcessing postProcessing) {
     switch (postProcessing) {
-        case EPostProcessing::Identity: return image;
-        case EPostProcessing::Square:   return image * image;
-        case EPostProcessing::Clip10:   return std::min(image, 10.f);
-        case EPostProcessing::Clip100:  return std::min(image, 100.f);
+        case EPostProcessing::Identity:  return image;
+        case EPostProcessing::Square:    return image * image;
+        case EPostProcessing::Clip10:    return std::min(image, 10.f);
+        case EPostProcessing::Clip100:   return std::min(image, 100.f);
         default:
             throw runtime_error{"Invalid post processing selected."};
     }
@@ -602,13 +607,10 @@ vector<Channel> ImageCanvas::channelsFromImages(
                 } else {
                     for (int y = 0; y < size.y(); ++y) {
                         for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyPostProcessing(
-                                ImageCanvas::applyMetric(
-                                    chan->eval({x, y}),
-                                    referenceChan->eval({x + offset.x(), y + offset.y()}),
-                                    metric
-                                ),
-                                postProcessing
+                            result[i].at({x, y}) = ImageCanvas::applyMetric(
+                                ImageCanvas::applyPostProcessing(chan->eval({x, y}), postProcessing),
+                                ImageCanvas::applyPostProcessing(referenceChan->eval({x + offset.x(), y + offset.y()}), postProcessing),
+                                metric
                             );
                         }
                     }
@@ -623,9 +625,10 @@ vector<Channel> ImageCanvas::channelsFromImages(
                 } else {
                     for (int y = 0; y < size.y(); ++y) {
                         for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyPostProcessing(
-                                ImageCanvas::applyMetric(chan->eval({x, y}), 0, metric),
-                                postProcessing
+                            result[i].at({x, y}) = ImageCanvas::applyMetric(
+                                ImageCanvas::applyPostProcessing(chan->eval({x, y}), postProcessing),
+                                ImageCanvas::applyPostProcessing(0, postProcessing),
+                                metric
                             );
                         }
                     }

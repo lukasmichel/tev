@@ -178,6 +178,7 @@ enum ETonemap : int {
     Gamma,
     FalseColor,
     PositiveNegative,
+    Complex,
 
     // This enum value should never be used directly.
     // It facilitates looping over all members of this enum.
@@ -204,6 +205,7 @@ enum EPostProcessing : int {
     Square,
     Clip10,
     Clip100,
+    Magnitude,
 
     // This enum value should never be used directly.
     // It facilitates looping over all members of this enum.
