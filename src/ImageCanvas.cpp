@@ -607,10 +607,13 @@ vector<Channel> ImageCanvas::channelsFromImages(
                 } else {
                     for (int y = 0; y < size.y(); ++y) {
                         for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyMetric(
-                                ImageCanvas::applyPostProcessing(chan->eval({x, y}), postProcessing),
-                                ImageCanvas::applyPostProcessing(referenceChan->eval({x + offset.x(), y + offset.y()}), postProcessing),
-                                metric
+                            result[i].at({x, y}) = ImageCanvas::applyPostProcessing(
+                                ImageCanvas::applyMetric(
+                                    chan->eval({x, y}),
+                                    referenceChan->eval({x + offset.x(), y + offset.y()}),
+                                    metric
+                                ),
+                                postProcessing
                             );
                         }
                     }
@@ -625,10 +628,13 @@ vector<Channel> ImageCanvas::channelsFromImages(
                 } else {
                     for (int y = 0; y < size.y(); ++y) {
                         for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyMetric(
-                                ImageCanvas::applyPostProcessing(chan->eval({x, y}), postProcessing),
-                                ImageCanvas::applyPostProcessing(0, postProcessing),
-                                metric
+                            result[i].at({x, y}) = ImageCanvas::applyPostProcessing(
+                                ImageCanvas::applyMetric(
+                                    chan->eval({x, y}),
+                                    0,
+                                    metric
+                                ),
+                                postProcessing
                             );
                         }
                     }
