@@ -366,7 +366,8 @@ Vector3f ImageCanvas::applyTonemap(const Vector3f& value, float gamma, ETonemap 
                 };
 
                 float v = value.mean();
-                v = log(v) / log(1000000);
+                //v = log(v) / log(1000000);
+                v = log2(value.mean() + 0.03125f) / 10 + 0.5f;
                 result = falseColor(v);
                 break;
             }
