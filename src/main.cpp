@@ -41,9 +41,9 @@ int mainFunc(const vector<string>& arguments) {
     ValueFlag<string> filterFlag{
         parser,
         "FILTER",
-        "Filter visible images and layers according to a supplied string. "
-        "The string must have the format 'image:layer'. "
-        "Only images whose name contains 'image' and layers whose name contains 'layer' will be visible.",
+        "Filter visible images and groups according to a supplied string. "
+        "The string must have the format 'image:group'. "
+        "Only images whose name contains 'image' and groups whose name contains 'group' will be visible.",
         {'f', "filter"},
     };
 
@@ -59,6 +59,15 @@ int mainFunc(const vector<string>& arguments) {
         "HELP",
         "Display this help menu.",
         {'h', "help"},
+    };
+
+    ValueFlag<string> hostnameFlag{
+        parser,
+        "HOSTNAME",
+        "The hostname to listen on for IPC communication. "
+        "tev can have a distinct primary instance for each unique hostname in use. "
+        "Default is 127.0.0.1:14158",
+        {"host", "hostname"},
     };
 
     ValueFlag<bool> maximizeFlag{
@@ -164,7 +173,8 @@ int mainFunc(const vector<string>& arguments) {
         return 0;
     }
 
-    auto ipc = make_shared<Ipc>();
+    const string hostname = hostnameFlag ? get(hostnameFlag) : "127.0.0.1:14158";
+    auto ipc = make_shared<Ipc>(hostname);
 
     // If we're not the primary instance and did not request to open a new window,
     // simply send the to-be-opened images to the primary instance.
@@ -177,7 +187,9 @@ int mainFunc(const vector<string>& arguments) {
             }
 
             try {
-                ipc->sendToPrimaryInstance(tfm::format("%s:%s", path{imageFile}.make_absolute(), channelSelector));
+                IpcPacket packet;
+                packet.setOpenImage(tfm::format("%s:%s", path{imageFile}.make_absolute(), channelSelector), true);
+                ipc->sendToPrimaryInstance(packet);
             } catch (runtime_error e) {
                 tlog::error() << tfm::format("Invalid file '%s': %s", imageFile, e.what());
             }
@@ -224,6 +236,8 @@ int mainFunc(const vector<string>& arguments) {
     // terminated as the main thread terminates.
     stdinThread.detach();
 
+    unique_ptr<ImageViewer> imageViewer;
+
     // Spawn another background thread, this one dealing with images passed to us
     // via inter-process communication (IPC). This happens when
     // a user starts another instance of tev while one is already running. Note, that this
@@ -233,13 +247,96 @@ int mainFunc(const vector<string>& arguments) {
     if (ipc->isPrimaryInstance()) {
         ipcThread = thread{[&]() {
             while (!shallShutdown) {
-                while (ipc->receiveFromSecondaryInstance([&](const string& reveicedString) {
-                    string imageString = ensureUtf8(reveicedString);
-                    size_t colonPos = min(imageString.length() - 1, imageString.find_last_of(":"));
-                    imagesLoader->enqueue(imageString.substr(0, colonPos), imageString.substr(colonPos + 1), true);
-                })) { }
+                ipc->receiveFromSecondaryInstance([&](const IpcPacket& packet) {
+                    try {
+                        switch (packet.type()) {
+                            case IpcPacket::OpenImage: {
+                                auto info = packet.interpretAsOpenImage();
+                                string imageString = ensureUtf8(info.imagePath);
+                                size_t colonPos = imageString.find_last_of(":");
+                                if (colonPos == std::string::npos) {
+                                    imagesLoader->enqueue(imageString, "", info.grabFocus);
+                                } else {
+                                    imagesLoader->enqueue(imageString.substr(0, colonPos), imageString.substr(colonPos + 1), info.grabFocus);
+                                }
+                                break;
+                            }
 
-                this_thread::sleep_for(chrono::milliseconds{100});
+                            case IpcPacket::ReloadImage: {
+                                while (!imageViewer) { }
+                                auto info = packet.interpretAsReloadImage();
+                                imageViewer->scheduleToUiThread([&,info] {
+                                    string imageString = ensureUtf8(info.imageName);
+                                    imageViewer->reloadImage(imageString, info.grabFocus);
+                                });
+
+                                glfwPostEmptyEvent();
+                                break;
+                            }
+
+                            case IpcPacket::CloseImage: {
+                                while (!imageViewer) { }
+                                auto info = packet.interpretAsCloseImage();
+                                imageViewer->scheduleToUiThread([&,info] {
+                                    string imageString = ensureUtf8(info.imageName);
+                                    imageViewer->removeImage(imageString);
+                                });
+
+                                glfwPostEmptyEvent();
+                                break;
+                            }
+
+                            case IpcPacket::UpdateImage: {
+                                while (!imageViewer) { }
+                                auto info = packet.interpretAsUpdateImage();
+                                imageViewer->scheduleToUiThread([&,info] {
+                                    string imageString = ensureUtf8(info.imageName);
+                                    imageViewer->updateImage(imageString, info.grabFocus, info.channel, info.x, info.y, info.width, info.height, info.imageData);
+                                });
+
+                                glfwPostEmptyEvent();
+                                break;
+                            }
+
+                            case IpcPacket::CreateImage: {
+                                while (!imageViewer) { }
+                                auto info = packet.interpretAsCreateImage();
+                                imageViewer->scheduleToUiThread([&,info] {
+                                    string imageString = ensureUtf8(info.imageName);
+                                    stringstream imageStream;
+                                    imageStream
+                                        << "empty" << " "
+                                        << info.width << " "
+                                        << info.height << " "
+                                        << info.nChannels << " "
+                                        ;
+                                    for (int i = 0; i < info.nChannels; ++i) {
+                                        // The following lines encode strings by prefixing their length.
+                                        // The reason for using this encoding is to allow  arbitrary characters,
+                                        // including whitespaces, in the channel names.
+                                        imageStream << info.channelNames[i].length() << info.channelNames[i];
+                                    }
+
+                                    auto image = tryLoadImage(imageString, imageStream, "");
+                                    if (image) {
+                                        imageViewer->addImage(image, info.grabFocus);
+                                    }
+                                });
+
+                                glfwPostEmptyEvent();
+                                break;
+                            }
+
+                            default: {
+                                throw runtime_error{tfm::format("Invalid IPC packet type %d", (int)packet.type())};
+                            }
+                        }
+                    } catch (const runtime_error& e) {
+                        tlog::warning() << "Malformed IPC packet: " << e.what();
+                    }
+                });
+
+                this_thread::sleep_for(chrono::milliseconds{10});
             }
         }};
     }
@@ -260,30 +357,28 @@ int mainFunc(const vector<string>& arguments) {
     // Init nanogui application
     nanogui::init();
 
-    {
-        auto app = unique_ptr<ImageViewer>{new ImageViewer{imagesLoader, !imageFiles}};
-        app->drawAll();
-        app->setVisible(true);
+    imageViewer.reset(new ImageViewer{imagesLoader, !imageFiles});
+    imageViewer->drawAll();
+    imageViewer->setVisible(true);
 
-        // Do what the maximize flag tells us---if it exists---and
-        // maximize if we have images otherwise.
-        if (maximizeFlag ? get(maximizeFlag) : imageFiles) {
-            app->maximize();
-        }
-
-        // Apply parameter flags
-        if (exposureFlag) { app->setExposure(get(exposureFlag)); }
-        if (filterFlag)   { app->setFilter(get(filterFlag)); }
-        if (gammaFlag)    { app->setGamma(get(gammaFlag)); }
-        if (metricFlag)   { app->setMetric(toMetric(get(metricFlag))); }
-        if (postProcessingFlag) { app->setPostProcessing(toPostProcessing(get(postProcessingFlag))); }
-        if (offsetFlag)   { app->setOffset(get(offsetFlag)); }
-        if (tonemapFlag)  { app->setTonemap(toTonemap(get(tonemapFlag))); }
-
-        // Refresh only every 250ms if there are no user interactions.
-        // This makes an idling tev surprisingly energy-efficient. :)
-        nanogui::mainloop(250);
+    // Do what the maximize flag tells us---if it exists---and
+    // maximize if we have images otherwise.
+    if (maximizeFlag ? get(maximizeFlag) : imageFiles) {
+        imageViewer->maximize();
     }
+
+    // Apply parameter flags
+    if (exposureFlag) { imageViewer->setExposure(get(exposureFlag)); }
+    if (filterFlag)   { imageViewer->setFilter(get(filterFlag)); }
+    if (gammaFlag)    { imageViewer->setGamma(get(gammaFlag)); }
+    if (metricFlag)   { imageViewer->setMetric(toMetric(get(metricFlag))); }
+    if (postProcessingFlag) { imageViewer->setPostProcessing(toPostProcessing(get(postProcessingFlag))); }
+    if (offsetFlag)   { imageViewer->setOffset(get(offsetFlag)); }
+    if (tonemapFlag)  { imageViewer->setTonemap(toTonemap(get(tonemapFlag))); }
+
+    // Refresh only every 250ms if there are no user interactions.
+    // This makes an idling tev surprisingly energy-efficient. :)
+    nanogui::mainloop(250);
 
     shallShutdown = true;
 
@@ -299,6 +394,8 @@ int mainFunc(const vector<string>& arguments) {
     if (stdinThread.joinable()) {
         stdinThread.join();
     }
+
+    imageViewer.reset();
 
     return 0;
 }

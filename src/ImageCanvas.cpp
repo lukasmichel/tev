@@ -5,14 +5,14 @@
 #include <tev/ImageCanvas.h>
 #include <tev/ThreadPool.h>
 
+#include <tev/imageio/ImageSaver.h>
+
 #include <nanogui/theme.h>
 #include <nanogui/screen.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-
 #include <fstream>
 #include <numeric>
+#include <set>
 
 using namespace Eigen;
 using namespace filesystem;
@@ -37,6 +37,8 @@ bool ImageCanvas::scrollEvent(const Vector2i& p, const Vector2f& rel) {
     // need to directly ask GLFW.
     if (glfwGetKey(glfwWindow, GLFW_KEY_LEFT_SHIFT) || glfwGetKey(glfwWindow, GLFW_KEY_RIGHT_SHIFT)) {
         scaleAmount /= 10;
+    } else if (glfwGetKey(glfwWindow, SYSTEM_COMMAND_LEFT) || glfwGetKey(glfwWindow, SYSTEM_COMMAND_RIGHT)) {
+        scaleAmount /= std::log2(1.1f);
     }
 
     scale(scaleAmount, p.cast<float>());
@@ -70,7 +72,7 @@ void ImageCanvas::drawGL() {
         mShader.draw(
             2.0f * mSize.cast<float>().cwiseInverse() / mPixelRatio,
             Vector2f::Constant(20),
-            image->texture(getChannels(*image)),
+            image->texture(mRequestedChannelGroup),
             // The uber shader operates in [-1, 1] coordinates and requires the _inserve_
             // image transform to obtain texture coordinates in [0, 1]-space.
             transform(image).inverse().matrix(),
@@ -89,11 +91,11 @@ void ImageCanvas::drawGL() {
     mShader.draw(
         2.0f * mSize.cast<float>().cwiseInverse() / mPixelRatio,
         Vector2f::Constant(20),
-        mImage->texture(getChannels(*mImage)),
+        mImage->texture(mRequestedChannelGroup),
         // The uber shader operates in [-1, 1] coordinates and requires the _inserve_
         // image transform to obtain texture coordinates in [0, 1]-space.
         transform(mImage.get()).inverse().matrix(),
-        mReference->texture(getChannels(*mReference)),
+        mReference->texture(mRequestedChannelGroup),
         transform(mReference.get()).inverse().matrix(),
         mExposure,
         mOffset,
@@ -130,10 +132,7 @@ void ImageCanvas::draw(NVGcontext *ctx) {
         };
 
         if (pixelSize.x() > 50 && pixelSize.x() < 1024) {
-            float fontSize = pixelSize.x() / 6;
-            float fontAlpha = min(min(1.0f, (pixelSize.x() - 50) / 30), (1024 - pixelSize.x()) / 256);
-
-            vector<string> channels = getChannels(*mImage);
+            vector<string> channels = mImage->channelsInGroup(mRequestedChannelGroup);
             // Remove duplicates
             channels.erase(unique(begin(channels), end(channels)), end(channels));
 
@@ -141,6 +140,12 @@ void ImageCanvas::draw(NVGcontext *ctx) {
             for (const auto& channel : channels) {
                 colors.emplace_back(Channel::color(channel));
             }
+
+            float fontSize = pixelSize.x() / 6;
+            if (colors.size() > 4) {
+                fontSize *= 4.0f / colors.size();
+            }
+            float fontAlpha = min(min(1.0f, (pixelSize.x() - 50) / 30), (1024 - pixelSize.x()) / 256);
 
             nvgFontSize(ctx, fontSize);
             nvgFontFace(ctx, "sans");
@@ -226,76 +231,8 @@ void ImageCanvas::scale(float amount, const Vector2f& origin) {
     mTransform = scaleTransform * mTransform;
 }
 
-float ImageCanvas::applyExposureAndOffset(float value) {
+float ImageCanvas::applyExposureAndOffset(float value) const {
     return pow(2.0f, mExposure) * value + mOffset;
-}
-
-vector<string> ImageCanvas::getChannels(const Image& image, const string& requestedLayer) {
-    vector<vector<string>> groups = {
-        { "Re", "Im" },
-        { "R", "G", "B" },
-        { "r", "g", "b" },
-        { "X", "Y", "Z" },
-        { "x", "y", "z" },
-        { "U", "V" },
-        { "u", "v" },
-        { "Z" },
-        { "z" },
-    };
-
-    string layerPrefix = requestedLayer.empty() ? "" : (requestedLayer + ".");
-
-    vector<string> result;
-    for (const auto& group : groups) {
-        for (size_t i = 0; i < group.size(); ++i) {
-            const auto& name = layerPrefix + group[i];
-            if (image.hasChannel(name)) {
-                result.emplace_back(name);
-            } else if (image.hasChannel(group[i])) {
-                result.emplace_back(group[i]);
-            }
-        }
-
-        if (!result.empty()) {
-            break;
-        }
-    }
-
-    string alphaChannelName = layerPrefix + "A";
-
-    // No channels match the given groups; fall back to the first 3 channels.
-    if (result.empty()) {
-        const auto& channelNames = image.channelsInLayer(requestedLayer);
-        for (const auto& name : channelNames) {
-            if (name != alphaChannelName) {
-                result.emplace_back(name);
-            }
-
-            if (result.size() >= 3) {
-                break;
-            }
-        }
-    }
-
-    // If we found just 1 channel, let's display is as grayscale by duplicating it twice.
-    if (result.size() == 1) {
-        result.push_back(result[0]);
-        result.push_back(result[0]);
-    }
-
-    // If there is an alpha layer, use it
-    if (image.hasChannel(alphaChannelName)) {
-        result.emplace_back(alphaChannelName);
-    }
-
-    // If we found just an alpha channel, let's display is as grayscale by duplicating it twice
-    // (similar to the single-non-alpha-channel case).
-    if (result.size() == 1) {
-        result.push_back(result[0]);
-        result.push_back(result[0]);
-    }
-
-    return result;
 }
 
 Vector2i ImageCanvas::getImageCoords(const Image& image, Vector2i mousePos) {
@@ -314,13 +251,15 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
 
     Vector2i imageCoords = getImageCoords(*mImage, nanoPos);
     for (const auto& channel : channels) {
-        result.push_back(mImage->channel(channel)->eval(imageCoords));
+        const Channel* c = mImage->channel(channel);
+        TEV_ASSERT(c, "Requested channel must exist.");
+        result.push_back(c->eval(imageCoords));
     }
 
     // Subtract reference if it exists.
     if (mReference) {
         Vector2i referenceCoords = getImageCoords(*mReference, nanoPos);
-        const auto& referenceChannels = getChannels(*mReference);
+        auto referenceChannels = mReference->channelsInGroup(mRequestedChannelGroup);
         for (size_t i = 0; i < result.size(); ++i) {
             float reference = i < referenceChannels.size() ?
                 mReference->channel(referenceChannels[i])->eval(referenceCoords) :
@@ -350,7 +289,7 @@ Vector3f ImageCanvas::applyTonemap(const Vector3f& value, float gamma, ETonemap 
         case ETonemap::FalseColor:
             {
                 static const auto falseColor = [](float linear) {
-                    static const auto& fcd = falseColorData();
+                    static const auto& fcd = colormap::legacy();
 
                     int fcCount = fcd.size() / 4;
                     float r = clamp<float>(linear * fcCount, 0, fcCount - 1);
@@ -422,20 +361,95 @@ void ImageCanvas::resetTransform() {
     mTransform = Affine2f::Identity();
 }
 
-void ImageCanvas::saveImage(const path& path) {
+std::vector<float> ImageCanvas::getHdrImageData(bool divideAlpha) const {
+    std::vector<float> result;
+
+    if (!mImage) {
+        return result;
+    }
+
+    const auto& channels = channelsFromImages(mImage, mReference, mRequestedChannelGroup, mMetric, mPostProcessing);
+    auto numPixels = mImage->count();
+
+    if (channels.empty()) {
+        return result;
+    }
+
+    int nChannelsToSave = std::min((int)channels.size(), 4);
+
+    // Flatten image into vector
+    result.resize(4 * numPixels, 0);
+
+    ThreadPool pool;
+    pool.parallelFor(0, nChannelsToSave, [&channels, &result](int i) {
+        const auto& channelData = channels[i].data();
+        for (DenseIndex j = 0; j < channelData.size(); ++j) {
+            result[j * 4 + i] = channelData(j);
+        }
+    });
+
+    // Manually set alpha channel to 1 if the image does not have one.
+    if (nChannelsToSave < 4) {
+        for (DenseIndex i = 0; i < numPixels; ++i) {
+            result[i * 4 + 3] = 1;
+        }
+    }
+
+    // Divide alpha out if needed (for storing in non-premultiplied formats)
+    if (divideAlpha) {
+        pool.parallelFor(0, min(nChannelsToSave, 3), [&result,numPixels](int i) {
+            for (DenseIndex j = 0; j < numPixels; ++j) {
+                float alpha = result[j * 4 + 3];
+                if (alpha == 0) {
+                    result[j * 4 + i] = 0;
+                } else {
+                    result[j * 4 + i] /= alpha;
+                }
+            }
+        });
+    }
+
+    return result;
+}
+
+std::vector<char> ImageCanvas::getLdrImageData(bool divideAlpha) const {
+    std::vector<char> result;
+
+    if (!mImage) {
+        return result;
+    }
+
+    auto numPixels = mImage->count();
+    auto floatData = getHdrImageData(divideAlpha);
+
+    // Store as LDR image.
+    result.resize(floatData.size());
+
+    ThreadPool pool;
+    pool.parallelFor<DenseIndex>(0, numPixels, [&](DenseIndex i) {
+        size_t start = 4 * i;
+        Vector3f value = applyTonemap({
+            applyExposureAndOffset(floatData[start]),
+            applyExposureAndOffset(floatData[start + 1]),
+            applyExposureAndOffset(floatData[start + 2]),
+        });
+        for (int j = 0; j < 3; ++j) {
+            floatData[start + j] = value[j];
+        }
+        for (int j = 0; j < 4; ++j) {
+            result[start + j] = (char)(floatData[start + j] * 255 + 0.5f);
+        }
+    });
+
+    return result;
+}
+
+void ImageCanvas::saveImage(const path& path) const {
     if (!mImage) {
         return;
     }
 
-    const auto& channels = channelsFromImages(mImage, mReference, mRequestedLayer, mMetric, mPostProcessing);
     Vector2i imageSize = mImage->size();
-    auto numPixels = mImage->count();
-
-    TEV_ASSERT(channels.size() <= 4, "Can not save an image with more than 4 channels.");
-
-    if (channels.empty()) {
-        return;
-    }
 
     tlog::info() << "Saving currently displayed image as '" << path << "'.";
     auto start = chrono::system_clock::now();
@@ -445,67 +459,30 @@ void ImageCanvas::saveImage(const path& path) {
         throw invalid_argument{tfm::format("Could not open file %s", path)};
     }
 
-    // Flatten channels into single array
-    vector<float> floatData(4 * channels.front().count(), 0);
-
-    ThreadPool pool;
-    pool.parallelFor(0, (int)channels.size(), [&channels, &floatData](int i) {
-        const auto& channelData = channels[i].data();
-        for (DenseIndex j = 0; j < channelData.size(); ++j) {
-            floatData[j * 4 + i] = channelData(j);
+    for (const auto& saver : ImageSaver::getSavers()) {
+        if (!saver->canSaveFile(path)) {
+            continue;
         }
-    });
 
-    // Manually set alpha channel to 1 if the image does not have one.
-    if (channels.size() < 4) {
-        for (DenseIndex i = 0; i < numPixels; ++i) {
-            floatData[i * 4 + 3] = 1;
+        const auto* hdrSaver = dynamic_cast<const TypedImageSaver<float>*>(saver.get());
+        const auto* ldrSaver = dynamic_cast<const TypedImageSaver<char>*>(saver.get());
+
+        TEV_ASSERT(hdrSaver || ldrSaver, "Each image saver must either be a HDR or an LDR saver.");
+
+        if (hdrSaver) {
+            hdrSaver->save(f, path, getHdrImageData(!saver->hasPremultipliedAlpha()), imageSize, 4);
+        } else if (ldrSaver) {
+            ldrSaver->save(f, path, getLdrImageData(!saver->hasPremultipliedAlpha()), imageSize, 4);
         }
+
+        auto end = chrono::system_clock::now();
+        chrono::duration<double> elapsedSeconds = end - start;
+
+        tlog::success() << tfm::format("Saved '%s' after %.3f seconds.", path, elapsedSeconds.count());
+        return;
     }
 
-    static const auto stbiOfstreamWrite = [](void* context, void* data, int size) {
-        reinterpret_cast<ofstream*>(context)->write(reinterpret_cast<char*>(data), size);
-    };
-
-    string extension = toLower(path.extension());
-    if (extension == "hdr") {
-        // Store as HDR image.
-        stbi_write_hdr_to_func(stbiOfstreamWrite, &f, imageSize.x(), imageSize.y(), 4, floatData.data());
-    } else {
-        // Store as LDR image.
-        vector<char> byteData(floatData.size());
-        pool.parallelFor<DenseIndex>(0, numPixels, [&](DenseIndex i) {
-            size_t start = 4 * i;
-            Vector3f value = applyTonemap({
-                applyExposureAndOffset(floatData[start]),
-                applyExposureAndOffset(floatData[start + 1]),
-                applyExposureAndOffset(floatData[start + 2]),
-            });
-            for (int j = 0; j < 3; ++j) {
-                floatData[start + j] = value[j];
-            }
-            for (int j = 0; j < 4; ++j) {
-                byteData[start + j] = (char)(floatData[start + j] * 255 + 0.5f);
-            }
-        });
-
-        if (extension == "jpg" || extension == "jpeg") {
-            stbi_write_jpg_to_func(stbiOfstreamWrite, &f, imageSize.x(), imageSize.y(), 4, byteData.data(), 100);
-        } else if (extension == "png") {
-            stbi_write_png_to_func(stbiOfstreamWrite, &f, imageSize.x(), imageSize.y(), 4, byteData.data(), 0);
-        } else if (extension == "bmp") {
-            stbi_write_bmp_to_func(stbiOfstreamWrite, &f, imageSize.x(), imageSize.y(), 4, byteData.data());
-        } else if (extension == "tga") {
-            stbi_write_tga_to_func(stbiOfstreamWrite, &f, imageSize.x(), imageSize.y(), 4, byteData.data());
-        } else {
-            throw invalid_argument{tfm::format("Image '%s' has unknown format.", path)};
-        }
-    }
-
-    auto end = chrono::system_clock::now();
-    chrono::duration<double> elapsedSeconds = end - start;
-
-    tlog::success() << tfm::format("Saved '%s' after %.3f seconds.", path, elapsedSeconds.count());
+    throw invalid_argument{tfm::format("No save routine for image type '%s' found.", path.extension())};
 }
 
 shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
@@ -513,7 +490,7 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
         return nullptr;
     }
 
-    string channels = join(getChannels(*mImage), ",");
+    string channels = join(mImage->channelsInGroup(mRequestedChannelGroup), ",");
     string key = mReference ?
         tfm::format("%d-%s-%d-%d-%d", mImage->id(), channels, mReference->id(), mMetric, mPostProcessing) :
         tfm::format("%d-%s-%d", mImage->id(), channels, mPostProcessing);
@@ -533,7 +510,7 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
     }
 
     auto image = mImage, reference = mReference;
-    auto requestedLayer = mRequestedLayer;
+    auto requestedChannelGroup = mRequestedChannelGroup;
     auto metric = mMetric;
     auto postProcessing = mPostProcessing;
     auto isCropped = mIsCropped;
@@ -542,11 +519,11 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
 
     mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([
         image, reference,
-        requestedLayer, metric, postProcessing,
+        requestedChannelGroup, metric, postProcessing,
         isCropped, cropMin, cropMax
     ]() {
         return computeCanvasStatistics(
-            image, reference, requestedLayer,
+            image, reference, requestedChannelGroup,
             metric, postProcessing,
             isCropped, cropMin, cropMax
         );
@@ -560,7 +537,7 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
 vector<Channel> ImageCanvas::channelsFromImages(
     shared_ptr<Image> image,
     shared_ptr<Image> reference,
-    const string& requestedLayer,
+    const string& requestedChannelGroup,
     EMetric metric,
     EPostProcessing postProcessing
 ) {
@@ -569,7 +546,7 @@ vector<Channel> ImageCanvas::channelsFromImages(
     }
 
     vector<Channel> result;
-    const auto& channelNames = getChannels(*image, requestedLayer);
+    auto channelNames = image->channelsInGroup(requestedChannelGroup);
     for (size_t i = 0; i < channelNames.size(); ++i) {
         result.emplace_back(toUpper(Channel::tail(channelNames[i])), image->size());
     }
@@ -587,7 +564,7 @@ vector<Channel> ImageCanvas::channelsFromImages(
     } else {
         Vector2i size = image->size();
         Vector2i offset = (reference->size() - size) / 2;
-        const auto& referenceChannels = getChannels(*reference, requestedLayer);
+        auto referenceChannels = reference->channelsInGroup(requestedChannelGroup);
 
         ThreadPool pool;
         pool.parallelFor<size_t>(0, channelNames.size(), [&](size_t i) {
@@ -650,14 +627,14 @@ vector<Channel> ImageCanvas::channelsFromImages(
 shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     std::shared_ptr<Image> image,
     std::shared_ptr<Image> reference,
-    const std::string& requestedLayer,
+    const std::string& requestedChannelGroup,
     EMetric metric,
     EPostProcessing postProcessing,
     bool isCropped,
     Vector2i cropMin,
     Vector2i cropMax
 ) {
-    auto flattened = channelsFromImages(image, reference, requestedLayer, metric, postProcessing);
+    auto flattened = channelsFromImages(image, reference, requestedChannelGroup, metric, postProcessing);
 
     float mean = 0;
     float maximum = -numeric_limits<float>::infinity();
@@ -752,7 +729,7 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     }
 
     auto numElements = image->count();
-    Eigen::MatrixXf indices(numElements, nChannels);
+    Eigen::MatrixXi indices(numElements, nChannels);
 
     ThreadPool pool;
     for (int i = 0; i < nChannels; ++i) {

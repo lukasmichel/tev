@@ -62,6 +62,8 @@ HelpWindow::HelpWindow(Widget *parent, function<void()> closeCallback)
         addRow(imageLoading, COMMAND + "+Shift+R or " + COMMAND + "+F5", "Reload All Images");
         addRow(imageLoading, COMMAND + "+W",                             "Close Image");
         addRow(imageLoading, COMMAND + "+Shift+W",                       "Close All Images");
+        addRow(imageLoading, COMMAND + "+C",                             "Copy Image or Path to Clipboard");
+        addRow(imageLoading, COMMAND + "+V",                             "Paste Image from Clipboard");
 
         new Label{shortcuts, "Image Options", "sans-bold", 18};
         auto imageSelection = new Widget{shortcuts};
@@ -71,8 +73,8 @@ HelpWindow::HelpWindow(Widget *parent, function<void()> closeCallback)
         addRow(imageSelection, "1…9",                 "Select N-th Image");
         addRow(imageSelection, "Down or S / Up or W", "Select Next / Previous Image");
 
-        addRow(imageSelection, "Click & Drag (+Shift)", "Translate Image");
-        addRow(imageSelection, "Plus / Minus / Scroll (+Shift)", "Zoom In / Out of Image");
+        addRow(imageSelection, "Click & Drag (+Shift/" + COMMAND + ")", "Translate Image");
+        addRow(imageSelection, "Plus / Minus / Scroll (+Shift/" + COMMAND + ")", "Zoom In / Out of Image");
 
         addRow(imageSelection, "F", "Fit Image to Screen");
         addRow(imageSelection, "N", "Normalize Image to [0, 1]");
@@ -97,13 +99,13 @@ HelpWindow::HelpWindow(Widget *parent, function<void()> closeCallback)
         addRow(referenceSelection, "Ctrl (hold)",                                "View selected Image if Reference is selected");
         addRow(referenceSelection, "Ctrl+Right or Ctrl+D / Ctrl+Left or Ctrl+A", "Select Next / Previous Error Metric");
 
-        new Label{shortcuts, "Layer Options", "sans-bold", 18};
-        auto layerSelection = new Widget{shortcuts};
-        layerSelection->setLayout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 0, 0});
+        new Label{shortcuts, "Channel Group Options", "sans-bold", 18};
+        auto groupSelection = new Widget{shortcuts};
+        groupSelection->setLayout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 0, 0});
 
-        addRow(layerSelection, "Left Click",             "Select Hovered Layer");
-        addRow(layerSelection, "Ctrl+1…9",               "Select N-th Layer");
-        addRow(layerSelection, "Right or D / Left or A", "Select Next / Previous Layer");
+        addRow(groupSelection, "Left Click",             "Select Hovered Channel Group");
+        addRow(groupSelection, "Ctrl+1…9",               "Select N-th Channel Group");
+        addRow(groupSelection, "Right or D / Left or A", "Select Next / Previous Channel Group");
 
         new Label{shortcuts, "Interface", "sans-bold", 18};
         auto ui = new Widget{shortcuts};
@@ -112,7 +114,7 @@ HelpWindow::HelpWindow(Widget *parent, function<void()> closeCallback)
         addRow(ui, ALT + "+Enter", "Maximize");
         addRow(ui, COMMAND + "+B", "Toggle GUI");
         addRow(ui, "H",            "Show Help (this Window)");
-        addRow(ui, COMMAND + "+P", "Find Image or Layer");
+        addRow(ui, COMMAND + "+P", "Find Image or Channel Group");
         addRow(ui, "Q or Esc",     "Quit");
     }
 
@@ -156,6 +158,7 @@ HelpWindow::HelpWindow(Widget *parent, function<void()> closeCallback)
         addSpacer(about, 30);
 
         addLibrary(about, "args",              "", "Single-Header Argument Parsing Library");
+        addLibrary(about, "clip",              "", "Cross-Platform Clipboard Library");
         addLibrary(about, "Eigen",             "", "C++ Template Library for Linear Algebra");
         addLibrary(about, "filesystem",        "", "Lightweight Path Manipulation Library");
         addLibrary(about, "Glad",              "", "Multi-Language GL Loader-Generator");
@@ -166,6 +169,7 @@ HelpWindow::HelpWindow(Widget *parent, function<void()> closeCallback)
         addLibrary(about, "OpenEXR",           "", "High Dynamic-Range (HDR) Image File Format");
         addLibrary(about, "stb_image(_write)", "", "Single-Header Library for Loading and Writing Images");
         addLibrary(about, "tinyformat",        "", "Minimal Type-Safe printf() Replacement");
+        addLibrary(about, "tinylogger",        "", "Minimal Pretty-Logging Library");
         addLibrary(about, "UTF8-CPP",          "", "Lightweight UTF-8 String Manipulation Library");
     }
 

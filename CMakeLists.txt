@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 
 project(tev)
-set(TEV_VERSION "1.14")
+set(TEV_VERSION "1.17")
 
 if (NOT TEV_DEPLOY)
     set(TEV_VERSION "${TEV_VERSION}dev")
@@ -85,16 +85,22 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "
     endif()
 endif()
 
-set(TEV_LIBS IlmImf nanogui ${NANOGUI_EXTRA_LIBS})
+set(TEV_LIBS clip IlmImf nanogui ${NANOGUI_EXTRA_LIBS})
 if (MSVC)
     set(TEV_LIBS ${TEV_LIBS} zlibstatic wsock32 ws2_32)
 endif()
 
 set(TEV_SOURCES
+    include/tev/imageio/ClipboardImageLoader.h src/imageio/ClipboardImageLoader.cpp
+    include/tev/imageio/EmptyImageLoader.h src/imageio/EmptyImageLoader.cpp
     include/tev/imageio/ExrImageLoader.h src/imageio/ExrImageLoader.cpp
+    include/tev/imageio/ExrImageSaver.h src/imageio/ExrImageSaver.cpp
     include/tev/imageio/ImageLoader.h src/imageio/ImageLoader.cpp
+    include/tev/imageio/ImageSaver.h src/imageio/ImageSaver.cpp
     include/tev/imageio/PfmImageLoader.h src/imageio/PfmImageLoader.cpp
+    include/tev/imageio/StbiHdrImageSaver.h src/imageio/StbiHdrImageSaver.cpp
     include/tev/imageio/StbiImageLoader.h src/imageio/StbiImageLoader.cpp
+    include/tev/imageio/StbiLdrImageSaver.h src/imageio/StbiLdrImageSaver.cpp
 
     include/tev/Channel.h src/Channel.cpp
     include/tev/Common.h src/Common.cpp
@@ -140,6 +146,7 @@ endif()
 
 include_directories(
     ${ARGS_INCLUDE}
+    ${CLIP_INCLUDE}
     ${EIGEN_INCLUDE}
     ${FILESYSTEM_INCLUDE}
     ${GLFW_INCLUDE}

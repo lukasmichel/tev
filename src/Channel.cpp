@@ -51,4 +51,33 @@ Color Channel::color(string channel) {
     return Color(1.0f, 1.0f);
 }
 
+void Channel::divideByAsync(const Channel& other, ThreadPool& pool) {
+    pool.parallelForNoWait<DenseIndex>(0, other.count(), [&](DenseIndex i) {
+        if (other.at(i) != 0) {
+            at(i) /= other.at(i);
+        } else {
+            at(i) = 0;
+        }
+    });
+}
+
+void Channel::multiplyWithAsync(const Channel& other, ThreadPool& pool) {
+    pool.parallelForNoWait<DenseIndex>(0, other.count(), [&](DenseIndex i) {
+        at(i) *= other.at(i);
+    });
+}
+
+void Channel::updateTile(int x, int y, int width, int height, const vector<float>& newData) {
+    if (x < 0 || y < 0 || x + width > size().x() || y + height > size().y()) {
+        tlog::warning() << "Tile [" << x << "," << y << "," << width << "," << height << "] could not be updated because it does not fit into the channel's size " << size();
+        return;
+    }
+
+    for (int posY = 0; posY < height; ++posY) {
+        for (int posX = 0; posX < width; ++posX) {
+            at({x + posX, y + posY}) = newData[posX + posY * width];
+        }
+    }
+}
+
 TEV_NAMESPACE_END

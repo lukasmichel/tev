@@ -9,6 +9,7 @@
 #include <tev/ThreadPool.h>
 
 #include <atomic>
+#include <istream>
 #include <map>
 #include <memory>
 #include <string>
@@ -23,9 +24,19 @@ struct ImageData {
     std::vector<std::string> layers;
 };
 
+struct ChannelGroup {
+    std::string name;
+    std::vector<std::string> channels;
+};
+
+struct ImageTexture {
+    GlTexture glTexture;
+    std::vector<std::string> channels;
+};
+
 class Image {
 public:
-    Image(const filesystem::path& path, const std::string& channelSelector);
+    Image(const filesystem::path& path, std::istream& iStream, const std::string& channelSelector);
 
     const filesystem::path& path() const {
         return mPath;
@@ -54,9 +65,11 @@ public:
         }
     }
 
-    const GlTexture* texture(const std::vector<std::string>& channelNames);
+    GlTexture* texture(const std::string& channelGroupName);
+    GlTexture* texture(const std::vector<std::string>& channelNames);
 
-    std::vector<std::string> channelsInLayer(std::string layerName) const;
+    std::vector<std::string> channelsInGroup(const std::string& groupName) const;
+    std::vector<std::string> getSortedChannels(const std::string& layerName) const;
 
     Eigen::Vector2i size() const {
         return mData.channels.front().size();
@@ -66,18 +79,41 @@ public:
         return mData.channels.front().count();
     }
 
-    const std::vector<std::string>& layers() const {
-        return mData.layers;
+    const std::vector<ChannelGroup>& channelGroups() const {
+        return mChannelGroups;
     }
 
     int id() const {
         return mId;
     }
 
+    void bumpId() {
+        mId = sId++;
+    }
+
+    void updateChannel(const std::string& channelName, int x, int y, int width, int height, const std::vector<float>& data);
+
     std::string toString() const;
 
 private:
     static std::atomic<int> sId;
+
+    Channel* mutableChannel(const std::string& channelName) {
+        auto it = std::find_if(std::begin(mData.channels), std::end(mData.channels), [&channelName](const Channel& c) { return c.name() == channelName; });
+        if (it != std::end(mData.channels)) {
+            return &(*it);
+        } else {
+            return nullptr;
+        }
+    }
+
+    std::vector<std::string> channelsInLayer(std::string layerName) const;
+    std::vector<ChannelGroup> getGroupedChannels(const std::string& layerName) const;
+
+    void alphaOperation(const std::function<void(Channel&, const Channel&)>& func);
+
+    void multiplyAlpha();
+    void unmultiplyAlpha();
 
     void ensureValid();
 
@@ -86,13 +122,16 @@ private:
 
     std::string mName;
 
-    std::map<std::string, GlTexture> mTextures;
+    std::map<std::string, ImageTexture> mTextures;
 
     ImageData mData;
+    
+    std::vector<ChannelGroup> mChannelGroups;
 
-    const int mId;
+    int mId;
 };
 
+std::shared_ptr<Image> tryLoadImage(filesystem::path path, std::istream& iStream, std::string channelSelector);
 std::shared_ptr<Image> tryLoadImage(filesystem::path path, std::string channelSelector);
 
 struct ImageAddition {

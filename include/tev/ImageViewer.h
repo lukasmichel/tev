@@ -18,6 +18,7 @@
 #include <nanogui/textbox.h>
 
 #include <memory>
+#include <set>
 #include <vector>
 
 TEV_NAMESPACE_BEGIN
@@ -34,23 +35,41 @@ public:
 
     bool keyboardEvent(int key, int scancode, int action, int modifiers) override;
 
+    void focusWindow();
+
     void drawContents() override;
 
     void insertImage(std::shared_ptr<Image> image, size_t index, bool shallSelect = false);
+    void moveImageInList(size_t oldIndex, size_t newIndex);
 
     void addImage(std::shared_ptr<Image> image, bool shallSelect = false) {
         insertImage(image, mImages.size(), shallSelect);
     }
 
     void removeImage(std::shared_ptr<Image> image);
+    void removeImage(const std::string& imageName) {
+        removeImage(imageByName(imageName));
+    }
     void removeAllImages();
 
-    void reloadImage(std::shared_ptr<Image> image);
+    void reloadImage(std::shared_ptr<Image> image, bool shallSelect = false);
+    void reloadImage(const std::string& imageName, bool shallSelect = false) {
+        reloadImage(imageByName(imageName), shallSelect);
+    }
     void reloadAllImages();
+
+    void updateImage(
+        const std::string& imageName,
+        bool shallSelect,
+        const std::string& channel,
+        int x, int y,
+        int width, int height,
+        const std::vector<float>& imageData
+    );
 
     void selectImage(const std::shared_ptr<Image>& image, bool stopPlayback = true);
 
-    void selectLayer(std::string name);
+    void selectGroup(std::string name);
 
     void selectReference(const std::shared_ptr<Image>& image);
 
@@ -118,20 +137,27 @@ public:
         mRequiresLayoutUpdate = true;
     }
 
+    template <typename T>
+    void scheduleToUiThread(const T& fun) {
+        mTaskQueue.push(fun);
+    }
+
 private:
     void updateFilter();
     void updateLayout();
     void updateTitle();
-    std::string layerName(size_t index);
+    std::string groupName(size_t index);
 
-    int layerId(const std::string& layer) const;
+    int groupId(const std::string& groupName) const;
     int imageId(const std::shared_ptr<Image>& image) const;
+    int imageId(const std::string& imageName) const;
 
-    std::string nextLayer(const std::string& layer, EDirection direction);
-    std::string nthVisibleLayer(size_t n);
+    std::string nextGroup(const std::string& groupName, EDirection direction);
+    std::string nthVisibleGroup(size_t n);
 
     std::shared_ptr<Image> nextImage(const std::shared_ptr<Image>& image, EDirection direction);
     std::shared_ptr<Image> nthVisibleImage(size_t n);
+    std::shared_ptr<Image> imageByName(const std::string& imageName);
 
     bool canDragSidebarFrom(const Eigen::Vector2i& p) {
         return mSidebar->visible() && p.x() - mSidebar->fixedWidth() < 10 && p.x() - mSidebar->fixedWidth() > -5;
@@ -179,6 +205,7 @@ private:
     std::vector<std::shared_ptr<Image>> mImages;
 
     MultiGraph* mHistogram;
+    std::set<std::shared_ptr<Image>> mToBump;
 
     nanogui::TextBox* mFilter;
     nanogui::Button* mRegexButton;
@@ -200,8 +227,8 @@ private:
 
     ImageCanvas* mImageCanvas;
 
-    nanogui::Widget* mLayerButtonContainer;
-    std::string mCurrentLayer;
+    nanogui::Widget* mGroupButtonContainer;
+    std::string mCurrentGroup;
 
     HelpWindow* mHelpWindow = nullptr;
 
@@ -209,7 +236,12 @@ private:
     bool mIsDraggingImage = false;
     bool mIsCroppingImage = false;
     
+    bool mIsDraggingImageButton = false;
+    size_t mDraggedImageButtonId;
+
     Eigen::Vector2f mDraggingStartPosition;
+
+    size_t mClipboardIndex = 0;
 };
 
 TEV_NAMESPACE_END

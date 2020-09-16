@@ -5,22 +5,23 @@
 #include <tev/ThreadPool.h>
 
 using namespace Eigen;
+using namespace filesystem;
 using namespace std;
 
 TEV_NAMESPACE_BEGIN
 
-bool PfmImageLoader::canLoadFile(ifstream& f) const {
+bool PfmImageLoader::canLoadFile(istream& iStream) const {
     char b[2];
-    f.read(b, sizeof(b));
+    iStream.read(b, sizeof(b));
 
-    bool result = !!f && f.gcount() == sizeof(b) && b[0] == 'P' && (b[1] == 'F' || b[1] == 'f');
+    bool result = !!iStream && iStream.gcount() == sizeof(b) && b[0] == 'P' && (b[1] == 'F' || b[1] == 'f');
 
-    f.clear();
-    f.seekg(0);
+    iStream.clear();
+    iStream.seekg(0);
     return result;
 }
 
-ImageData PfmImageLoader::load(ifstream& f, const filesystem::path&, const string& channelSelector) const {
+ImageData PfmImageLoader::load(istream& iStream, const path&, const string& channelSelector) const {
     ImageData result;
     ThreadPool threadPool;
 
@@ -28,7 +29,7 @@ ImageData PfmImageLoader::load(ifstream& f, const filesystem::path&, const strin
     Vector2i size;
     float scale;
 
-    f >> magic >> size.x() >> size.y() >> scale;
+    iStream >> magic >> size.x() >> size.y() >> scale;
 
     if (magic != "PF" && magic != "Pf") {
         throw invalid_argument{tfm::format("Invalid magic PFM string %s", magic)};
@@ -45,18 +46,22 @@ ImageData PfmImageLoader::load(ifstream& f, const filesystem::path&, const strin
     vector<Channel> channels = makeNChannels(numChannels, size);
 
     auto numPixels = (DenseIndex)size.x() * size.y();
+    if (numPixels == 0) {
+        throw invalid_argument{"Image has zero pixels."};
+    }
+    
     auto numFloats = numPixels * numChannels;
     auto numBytes = numFloats * sizeof(float);
 
     // Skip last newline at the end of the header.
     string line;
-    getline(f, line);
+    getline(iStream, line);
 
     // Read entire file in binary mode.
     vector<float> data(numFloats);
-    f.read(reinterpret_cast<char*>(data.data()), numBytes);
-    if (f.gcount() < (streamsize)numBytes) {
-        throw invalid_argument{tfm::format("Not sufficient bytes to read (%d vs %d)", f.gcount(), numBytes)};
+    iStream.read(reinterpret_cast<char*>(data.data()), numBytes);
+    if (iStream.gcount() < (streamsize)numBytes) {
+        throw invalid_argument{tfm::format("Not sufficient bytes to read (%d vs %d)", iStream.gcount(), numBytes)};
     }
 
     // Reverse bytes of every float if endianness does not match up with system

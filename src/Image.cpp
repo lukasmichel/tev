@@ -8,7 +8,8 @@
 #include <Iex.h>
 
 #include <chrono>
-#include <iostream>
+#include <fstream>
+#include <istream>
 
 using namespace Eigen;
 using namespace filesystem;
@@ -18,44 +19,50 @@ TEV_NAMESPACE_BEGIN
 
 atomic<int> Image::sId(0);
 
-Image::Image(const filesystem::path& path, const string& channelSelector)
+Image::Image(const class path& path, istream& iStream, const string& channelSelector)
 : mPath{path}, mChannelSelector{channelSelector}, mId{sId++} {
-    if (!channelSelector.empty()) {
-        mName = tfm::format("%s:%s", path, channelSelector);
-    } else {
-        mName = path.str();
-    }
+    mName = channelSelector.empty() ? path.str() : tfm::format("%s:%s", path, channelSelector);
 
     auto start = chrono::system_clock::now();
 
-    ifstream f{nativeString(mPath), ios_base::binary};
-    if (!f) {
-        throw invalid_argument{tfm::format("File %s could not be opened.", mPath)};
+    if (!iStream) {
+        throw invalid_argument{tfm::format("Image %s could not be opened.", mName)};
     }
 
     std::string loadMethod;
     for (const auto& imageLoader : ImageLoader::getLoaders()) {
         // If we arrived at the last loader, then we want to at least try loading the image,
         // even if it is likely to fail.
-        bool useLoader = imageLoader == ImageLoader::getLoaders().back() || imageLoader->canLoadFile(f);
+        bool useLoader = imageLoader == ImageLoader::getLoaders().back() || imageLoader->canLoadFile(iStream);
 
         // Reset file cursor in case file load check changed it.
-        f.clear();
-        f.seekg(0);
+        iStream.clear();
+        iStream.seekg(0);
 
         if (useLoader) {
             loadMethod = imageLoader->name();
-            mData = imageLoader->load(f, mPath, mChannelSelector);
+            mData = imageLoader->load(iStream, mPath, mChannelSelector);
+            ensureValid();
+
+            // We assume an internal pre-multiplied-alpha representation
+            if (!imageLoader->hasPremultipliedAlpha()) {
+                multiplyAlpha();
+            }
             break;
         }
+    }
+
+    for (const auto& layer : mData.layers) {
+        auto groups = getGroupedChannels(layer);
+        mChannelGroups.insert(end(mChannelGroups), begin(groups), end(groups));
     }
 
     auto end = chrono::system_clock::now();
     chrono::duration<double> elapsedSeconds = end - start;
 
-    tlog::success() << tfm::format("Loaded '%s' via %s after %.3f seconds.", mPath, loadMethod, elapsedSeconds.count());
-
     ensureValid();
+
+    tlog::success() << tfm::format("Loaded '%s' via %s after %.3f seconds.", mName, loadMethod, elapsedSeconds.count());
 }
 
 string Image::shortName() const {
@@ -74,21 +81,25 @@ string Image::shortName() const {
     return result;
 }
 
-const GlTexture* Image::texture(const vector<string>& channelNames) {
+GlTexture* Image::texture(const string& channelGroupName) {
+    return texture(channelsInGroup(channelGroupName));
+}
+
+GlTexture* Image::texture(const vector<string>& channelNames) {
     string lookup = join(channelNames, ",");
     auto iter = mTextures.find(lookup);
     if (iter != end(mTextures)) {
-        return &iter->second;
+        return &iter->second.glTexture;
     }
 
-    mTextures.emplace(lookup, GlTexture{});
-    auto& texture = mTextures.at(lookup);
+    mTextures.emplace(lookup, ImageTexture{GlTexture{}, channelNames});
+    auto& texture = mTextures.at(lookup).glTexture;
 
     auto numPixels = count();
     vector<float> data(numPixels * 4);
 
     ThreadPool pool;
-    pool.parallelForNoWait(0, 4, [&](size_t i) {
+    for (size_t i = 0; i < 4; ++i) {
         if (i < channelNames.size()) {
             const auto& channelName = channelNames[i];
             const auto* chan = channel(channelName);
@@ -106,7 +117,7 @@ const GlTexture* Image::texture(const vector<string>& channelNames) {
                 data[j * 4 + i] = val;
             });
         }
-    });
+    }
     pool.waitUntilFinished();
 
     texture.setData(data, size(), 4);
@@ -139,6 +150,178 @@ vector<string> Image::channelsInLayer(string layerName) const {
     return result;
 }
 
+vector<string> Image::channelsInGroup(const string& groupName) const {
+    for (const auto& group : mChannelGroups) {
+        if (group.name == groupName) {
+            return group.channels;
+        }
+    }
+
+    return {};
+}
+
+vector<ChannelGroup> Image::getGroupedChannels(const string& layerName) const {
+    vector<vector<string>> groups = {
+        { "Re", "Im" },
+        { "R", "G", "B" },
+        { "r", "g", "b" },
+        { "X", "Y", "Z" },
+        { "x", "y", "z" },
+        { "U", "V" },
+        { "u", "v" },
+        { "Z" },
+        { "z" },
+    };
+
+    auto createChannelGroup = [](string layer, vector<string> channels) {
+        TEV_ASSERT(!channels.empty(), "Can't create a channel group without channels.");
+
+        auto channelTails = channels;
+        // Remove duplicates
+        channelTails.erase(unique(begin(channelTails), end(channelTails)), end(channelTails));
+        transform(begin(channelTails), end(channelTails), begin(channelTails), Channel::tail);
+        string channelsString = join(channelTails, ",");
+
+        string name;
+        if (layer.empty()) {
+            name = channelsString;
+        } else if (channelTails.size() == 1) {
+            name = layer + "." + channelsString;
+        } else {
+            name = layer + ".(" + channelsString + ")";
+        }
+
+        return ChannelGroup{name, move(channels)};
+    };
+
+    string layerPrefix = layerName.empty() ? "" : (layerName + ".");
+    string alphaChannelName = layerPrefix + "A";
+
+    vector<string> allChannels = channelsInLayer(layerName);
+
+    auto alphaIt = find(begin(allChannels), end(allChannels), alphaChannelName);
+    bool hasAlpha = alphaIt != end(allChannels);
+    if (hasAlpha) {
+        allChannels.erase(alphaIt);
+    }
+
+    vector<ChannelGroup> result;
+
+    for (const auto& group : groups) {
+        vector<string> groupChannels;
+        for (const string& channel : group) {
+            string name = layerPrefix + channel;
+            auto it = find(begin(allChannels), end(allChannels), name);
+            if (it != end(allChannels)) {
+                groupChannels.emplace_back(name);
+                allChannels.erase(it);
+            }
+        }
+
+        if (!groupChannels.empty()) {
+            if (groupChannels.size() == 1) {
+                groupChannels.emplace_back(groupChannels.front());
+                groupChannels.emplace_back(groupChannels.front());
+            }
+
+            if (hasAlpha) {
+                groupChannels.emplace_back(alphaChannelName);
+            }
+
+            result.emplace_back(createChannelGroup(layerName, move(groupChannels)));
+        }
+    }
+
+    for (const auto& name : allChannels) {
+        if (hasAlpha) {
+            result.emplace_back(
+                createChannelGroup(layerName, vector<string>{name, name, name, alphaChannelName})
+            );
+        } else {
+            result.emplace_back(
+                createChannelGroup(layerName, vector<string>{name, name, name})
+            );
+        }
+    }
+
+    if (hasAlpha && result.empty()) {
+        result.emplace_back(
+            createChannelGroup(layerName, vector<string>{alphaChannelName, alphaChannelName, alphaChannelName})
+        );
+    }
+
+    TEV_ASSERT(!result.empty(), "Images with no channels should never exist.");
+
+    return result;
+}
+
+vector<string> Image::getSortedChannels(const string& layerName) const {
+    string layerPrefix = layerName.empty() ? "" : (layerName + ".");
+    string alphaChannelName = layerPrefix + "A";
+    
+    bool includesAlphaChannel = false;
+
+    vector<string> result;
+    for (const auto& group : getGroupedChannels(layerName)) {
+        for (auto name : group.channels) {
+            if (name == alphaChannelName) {
+                if (includesAlphaChannel) {
+                    continue;
+                }
+                
+                includesAlphaChannel = true;
+            }
+            result.emplace_back(name);
+        }
+    }
+
+    return result;
+}
+
+void Image::updateChannel(const string& channelName, int x, int y, int width, int height, const vector<float>& data) {
+    Channel* chan = mutableChannel(channelName);
+    if (!chan) {
+        tlog::warning() << "Channel " << channelName << " could not be updated, because it does not exist.";
+        return;
+    }
+
+    chan->updateTile(x, y, width, height, data);
+
+    // Update textures that are cached for this channel
+    for (auto& kv : mTextures) {
+        auto& imageTexture = kv.second;
+        if (find(begin(imageTexture.channels), end(imageTexture.channels), channelName) == end(imageTexture.channels)) {
+            continue;
+        }
+
+        auto numPixels = width * height;
+        vector<float> textureData(numPixels * 4);
+
+        // Populate data for sub-region of the texture to be updated
+        for (size_t i = 0; i < 4; ++i) {
+            if (i < imageTexture.channels.size()) {
+                const auto& localChannelName = imageTexture.channels[i];
+                const auto* localChan = channel(localChannelName);
+                TEV_ASSERT(localChan, "Channel to be updated must exist");
+
+                for (int posY = 0; posY < height; ++posY) {
+                    for (int posX = 0; posX < width; ++posX) {
+                        int tileIdx = posX + posY * width;
+                        textureData[tileIdx * 4 + i] = localChan->at({x + posX, y + posY});
+                    }
+                }
+            } else {
+                float val = i == 3 ? 1 : 0;
+                for (DenseIndex j = 0; j < numPixels; ++j) {
+                    textureData[j * 4 + i] = val;
+                }
+            }
+        }
+
+        imageTexture.glTexture.setDataSub(textureData, {x, y}, {width, height}, 4);
+    }
+}
+
 string Image::toString() const {
     string result = tfm::format("Path: %s\n\nResolution: (%d, %d)\n\nChannels:\n", mName, size().x(), size().y());
 
@@ -155,6 +338,40 @@ string Image::toString() const {
     });
 
     return result + join(localLayers, "\n");
+}
+
+void Image::alphaOperation(const function<void(Channel&, const Channel&)>& func) {
+    for (const auto& layer : mData.layers) {
+        string layerPrefix = layer.empty() ? "" : (layer + ".");
+        string alphaChannelName = layerPrefix + "A";
+
+        if (!hasChannel(alphaChannelName)) {
+            continue;
+        }
+
+        const Channel* alphaChannel = channel(alphaChannelName);
+        for (auto& channelName : channelsInLayer(layer)) {
+            if (channelName != alphaChannelName) {
+                func(*mutableChannel(channelName), *alphaChannel);
+            }
+        }
+    }
+}
+
+void Image::multiplyAlpha() {
+    ThreadPool threadPool;
+    alphaOperation([&] (Channel& target, const Channel& alpha) {
+        target.multiplyWithAsync(alpha, threadPool);
+    });
+    threadPool.waitUntilFinished();
+}
+
+void Image::unmultiplyAlpha() {
+    ThreadPool threadPool;
+    alphaOperation([&] (Channel& target, const Channel& alpha) {
+        target.divideByAsync(alpha, threadPool);
+    });
+    threadPool.waitUntilFinished();
 }
 
 void Image::ensureValid() {
@@ -176,14 +393,7 @@ void Image::ensureValid() {
     }
 }
 
-shared_ptr<Image> tryLoadImage(path path, string channelSelector) {
-    try {
-        path = path.make_absolute();
-    } catch (runtime_error e) {
-        // If for some strange reason we can not obtain an absolute path, let's still
-        // try to open the image at the given path just to make sure.
-    }
-
+shared_ptr<Image> tryLoadImage(path path, istream& iStream, string channelSelector) {
     auto handleException = [&](const exception& e) {
         if (channelSelector.empty()) {
             tlog::error() << tfm::format("Could not load '%s'. %s", path, e.what());
@@ -193,7 +403,7 @@ shared_ptr<Image> tryLoadImage(path path, string channelSelector) {
     };
 
     try {
-        return make_shared<Image>(path, channelSelector);
+        return make_shared<Image>(path, iStream, channelSelector);
     } catch (const invalid_argument& e) {
         handleException(e);
     } catch (const runtime_error& e) {
@@ -205,12 +415,26 @@ shared_ptr<Image> tryLoadImage(path path, string channelSelector) {
     return nullptr;
 }
 
+shared_ptr<Image> tryLoadImage(path path, string channelSelector) {
+    try {
+        path = path.make_absolute();
+    } catch (runtime_error e) {
+        // If for some strange reason we can not obtain an absolute path, let's still
+        // try to open the image at the given path just to make sure.
+    }
+
+    ifstream fileStream{nativeString(path), ios_base::binary};
+    return tryLoadImage(path, fileStream, channelSelector);
+}
+
 void BackgroundImagesLoader::enqueue(const path& path, const string& channelSelector, bool shallSelect) {
     mWorkers.enqueueTask([path, channelSelector, shallSelect, this] {
         auto image = tryLoadImage(path, channelSelector);
         if (image) {
             mLoadedImages.push({ shallSelect, image });
         }
+
+        glfwPostEmptyEvent();
     });
 }
 

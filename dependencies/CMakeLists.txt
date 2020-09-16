@@ -32,7 +32,7 @@ if (WIN32)
     set_property(TARGET zlibstatic PROPERTY FOLDER "dependencies")
 
     set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/zlib" CACHE PATH " " FORCE)
-    set(ZLIB_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/zlib/$<CONFIGURATION>/zlibstatic.lib" CACHE FILEPATH " " FORCE)
+    set(ZLIB_LIBRARY zlibstatic)
 
     include_directories(${ZLIB_INCLUDE_DIR} "${CMAKE_CURRENT_BINARY_DIR}/zlib")
 endif()
@@ -45,8 +45,15 @@ set(OPENEXR_NAMESPACE_VERSIONING OFF CACHE BOOL " " FORCE)
 add_subdirectory(openexr EXCLUDE_FROM_ALL)
 set_property(TARGET b44ExpLogTable CopyIlmBaseLibs dwaLookups eLut Half Iex IlmImf IlmImf-obj IlmThread Imath toFloat PROPERTY FOLDER "dependencies")
 
+# Compile clip
+set(CLIP_EXAMPLES OFF CACHE BOOL " " FORCE)
+set(CLIP_TESTS OFF CACHE BOOL " " FORCE)
+add_subdirectory(clip)
+
 # Manually populate locations of our included dependencies.
 set(ARGS_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/args PARENT_SCOPE)
+
+set(CLIP_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/clip PARENT_SCOPE)
 
 set(EIGEN_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/nanogui/ext/eigen PARENT_SCOPE)
 

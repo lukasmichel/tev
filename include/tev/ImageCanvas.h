@@ -33,6 +33,9 @@ public:
 
     void translate(const Eigen::Vector2f& amount);
     void scale(float amount, const Eigen::Vector2f& origin);
+    float extractScale() const {
+        return std::sqrt(mTransform.linear().determinant());
+    }
 
     void setExposure(float exposure) {
         mExposure = exposure;
@@ -46,7 +49,7 @@ public:
         mGamma = gamma;
     }
 
-    float applyExposureAndOffset(float value);
+    float applyExposureAndOffset(float value) const;
 
     void setImage(std::shared_ptr<Image> image) {
         mImage = image;
@@ -56,13 +59,8 @@ public:
         mReference = reference;
     }
 
-    void setRequestedLayer(const std::string& layerName) {
-        mRequestedLayer = layerName;
-    }
-
-    static std::vector<std::string> getChannels(const Image& image, const std::string& requestedLayer);
-    std::vector<std::string> getChannels(const Image& image) const {
-        return getChannels(image, mRequestedLayer);
+    void setRequestedChannelGroup(const std::string& groupName) {
+        mRequestedChannelGroup = groupName;
     }
 
     Eigen::Vector2i getImageCoords(const Image& image, Eigen::Vector2i mousePos);
@@ -124,7 +122,10 @@ public:
     void fitImageToScreen(const Image& image);
     void resetTransform();
 
-    void saveImage(const filesystem::path& filename);
+    std::vector<float> getHdrImageData(bool divideAlpha) const;
+    std::vector<char> getLdrImageData(bool divideAlpha) const;
+
+    void saveImage(const filesystem::path& filename) const;
 
     std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>> canvasStatistics();
 
@@ -132,7 +133,7 @@ private:
     static std::vector<Channel> channelsFromImages(
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
-        const std::string& requestedLayer,
+        const std::string& requestedChannelGroup,
         EMetric metric,
         EPostProcessing postProcessing
     );
@@ -140,7 +141,7 @@ private:
     static std::shared_ptr<CanvasStatistics> computeCanvasStatistics(
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
-        const std::string& requestedLayer,
+        const std::string& requestedChannelGroup,
         EMetric metric,
         EPostProcessing postProcessing,
         bool isCropped,
@@ -163,7 +164,7 @@ private:
     std::shared_ptr<Image> mImage;
     std::shared_ptr<Image> mReference;
 
-    std::string mRequestedLayer;
+    std::string mRequestedChannelGroup = "";
 
     Eigen::Transform<float, 2, 2> mTransform = Eigen::Affine2f::Identity();
 

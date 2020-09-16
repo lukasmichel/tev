@@ -3,6 +3,8 @@
 
 #include <tev/ImageViewer.h>
 
+#include <clip.h>
+
 #include <filesystem/path.h>
 
 #include <nanogui/button.h>
@@ -326,9 +328,9 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
 
             mFilter->setPlaceholder("Find");
             mFilter->setTooltip(tfm::format(
-                "Filters visible images and layers according to a supplied string. "
-                "The string must have the format 'image:layer'. "
-                "Only images whose name contains 'image' and layers whose name contains 'layer' will be visible.\n\n"
+                "Filters visible images and channel groups according to a supplied string. "
+                "The string must have the format 'image:group'. "
+                "Only images whose name contains 'image' and groups whose name contains 'group' will be visible.\n\n"
                 "Keyboard shortcut:\n%s+P",
                 HelpWindow::COMMAND
             ));
@@ -452,13 +454,13 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
         }
     }
 
-    // Layer selection
+    // Group selection
     {
         mFooter = new Widget{mVerticalScreenSplit};
 
-        mLayerButtonContainer = new Widget{mFooter};
-        mLayerButtonContainer->setLayout(new BoxLayout{Orientation::Horizontal, Alignment::Fill});
-        mLayerButtonContainer->setFixedHeight(25);
+        mGroupButtonContainer = new Widget{mFooter};
+        mGroupButtonContainer->setLayout(new BoxLayout{Orientation::Horizontal, Alignment::Fill});
+        mGroupButtonContainer->setFixedHeight(25);
         mFooter->setFixedHeight(25);
         mFooter->setVisible(false);
     }
@@ -482,11 +484,31 @@ ImageViewer::~ImageViewer() {
 }
 
 bool ImageViewer::mouseButtonEvent(const Vector2i &p, int button, bool down, int modifiers) {
+    // Check if the user performed mousedown on an imagebutton so we can mark it as being dragged.
+    // This has to occur before Screen::mouseButtonEvent as the button would absorb the event.
+    if (down) {
+        if (mImageScrollContainer->contains(p)) {
+            auto& buttons = mImageButtonContainer->children();
+
+            Eigen::Vector2i relMousePos = (absolutePosition() + p) - mImageButtonContainer->absolutePosition();
+
+            for (size_t i = 0; i < buttons.size(); ++i) {
+                const auto* imgButton = dynamic_cast<ImageButton*>(buttons[i]);
+                if (imgButton->contains(relMousePos)) {
+                    mDraggedImageButtonId = i;
+                    mIsDraggingImageButton = true;
+                    mDraggingStartPosition = (relMousePos - imgButton->position()).cast<float>();
+                    break;
+                }
+            }
+        }
+    }
+
     if (Screen::mouseButtonEvent(p, button, down, modifiers)) {
         return true;
     }
 
-    if (down) {
+    if (down && !mIsDraggingImageButton) {
         if (canDragSidebarFrom(p)) {
             mIsDraggingSidebar = true;
             mDraggingStartPosition = p.cast<float>();
@@ -511,9 +533,14 @@ bool ImageViewer::mouseButtonEvent(const Vector2i &p, int button, bool down, int
             return true;
         }
     } else {
+        if (mIsDraggingImageButton) {
+            requestLayoutUpdate();
+        }
+
         mIsDraggingSidebar = false;
         mIsDraggingImage = false;
         mIsCroppingImage = false;
+        mIsDraggingImageButton = false;
     }
 
     return false;
@@ -542,6 +569,8 @@ bool ImageViewer::mouseMotionEvent(const Vector2i& p, const Vector2i& rel, int b
         // need to directly ask GLFW.
         if (glfwGetKey(glfwWindow, GLFW_KEY_LEFT_SHIFT) || glfwGetKey(glfwWindow, GLFW_KEY_RIGHT_SHIFT)) {
             relativeMovement /= 10;
+        } else if (glfwGetKey(glfwWindow, SYSTEM_COMMAND_LEFT) || glfwGetKey(glfwWindow, SYSTEM_COMMAND_RIGHT)) {
+            relativeMovement /= std::log2(1.1f);
         }
 
         // If left mouse button is held, move the image with mouse movement
@@ -556,6 +585,27 @@ bool ImageViewer::mouseMotionEvent(const Vector2i& p, const Vector2i& rel, int b
     } else if (mIsCroppingImage) {
         mImageCanvas->mCropMax =
         mImageCanvas->getImageCoords(*mCurrentImage, mousePos() - mImageCanvas->position());
+    } else if (mIsDraggingImageButton) {
+        auto& buttons = mImageButtonContainer->children();
+        Eigen::Vector2i relMousePos = (absolutePosition() + p) - mImageButtonContainer->absolutePosition();
+        for (size_t i = 0; i < buttons.size(); ++i) {
+            if (i == mDraggedImageButtonId) {
+                continue;
+            }
+            auto* imgButton = dynamic_cast<ImageButton*>(buttons[i]);
+            if (imgButton->contains(relMousePos)) {
+                Vector2i pos = imgButton->position();
+                pos.y() += ((int)mDraggedImageButtonId - (int)i) * imgButton->size().y();
+                imgButton->setPosition(pos);
+                imgButton->mouseEnterEvent(relMousePos, false);
+
+                moveImageInList(mDraggedImageButtonId, i);
+                mDraggedImageButtonId = i;
+                break;
+            }
+        }
+        
+        dynamic_cast<ImageButton*>(buttons[mDraggedImageButtonId])->setPosition(relMousePos - mDraggingStartPosition.cast<int>());
     }
 
     return false;
@@ -571,7 +621,7 @@ bool ImageViewer::dropEvent(const vector<string>& filenames) {
     }
 
     // Make sure we gain focus after dragging files into here.
-    glfwFocusWindow(mGLFWWindow);
+    focusWindow();
     return true;
 }
 
@@ -580,7 +630,7 @@ bool ImageViewer::keyboardEvent(int key, int scancode, int action, int modifiers
         return true;
     }
 
-    int numLayers = mLayerButtonContainer->childCount();
+    int numGroups = mGroupButtonContainer->childCount();
 
     // Keybindings which should _not_ respond to repeats
     if (action == GLFW_PRESS) {
@@ -596,8 +646,8 @@ bool ImageViewer::keyboardEvent(int key, int scancode, int action, int modifiers
                     }
                 }
             } else if (modifiers & GLFW_MOD_CONTROL) {
-                if (idx >= 0 && idx < numLayers) {
-                    selectLayer(nthVisibleLayer(idx));
+                if (idx >= 0 && idx < numGroups) {
+                    selectGroup(nthVisibleGroup(idx));
                 }
             } else {
                 const auto& image = nthVisibleImage(idx);
@@ -672,7 +722,74 @@ bool ImageViewer::keyboardEvent(int key, int scancode, int action, int modifiers
             setVisible(false);
             return true;
         } else if (mCurrentImage && key == GLFW_KEY_C && (modifiers & SYSTEM_COMMAND_MOD)) {
-            glfwSetClipboardString(mGLFWWindow, mCurrentImage->name().c_str());
+            if (mImageScrollContainer->focused()) {
+                if (clip::set_text(mCurrentImage->name())) {
+                    tlog::success() << "Image path copied to clipboard.";
+                } else {
+                    tlog::error() << "Failed to copy image path to clipboard.";
+                }
+            } else {
+                auto imageSize = mCurrentImage->size();
+
+                clip::image_spec imageMetadata;
+                imageMetadata.width = imageSize.x();
+                imageMetadata.height = imageSize.y();
+                imageMetadata.bits_per_pixel = 32;
+                imageMetadata.bytes_per_row = imageMetadata.bits_per_pixel / 8 * imageMetadata.width;
+
+                imageMetadata.red_mask    = 0x000000ff;
+                imageMetadata.green_mask  = 0x0000ff00;
+                imageMetadata.blue_mask   = 0x00ff0000;
+                imageMetadata.alpha_mask  = 0xff000000;
+                imageMetadata.red_shift   = 0;
+                imageMetadata.green_shift = 8;
+                imageMetadata.blue_shift  = 16;
+                imageMetadata.alpha_shift = 24;
+
+                auto imageData = mImageCanvas->getLdrImageData(true);
+                clip::image image(imageData.data(), imageMetadata);
+
+                if (clip::set_image(image)) {
+                    tlog::success() << "Image copied to clipboard.";
+                } else {
+                    tlog::error() << "Failed to copy image to clipboard.";
+                }
+            }
+        } else if (key == GLFW_KEY_V && (modifiers & SYSTEM_COMMAND_MOD)) {
+            // if (clip::has(clip::text_format())) {
+            //     string path;
+            //     if (!clip::get_text(path)) {
+            //         tlog::error() << "Failed to paste text from clipboard.";
+            //     } else {
+            //         auto image = tryLoadImage(path, "");
+            //         if (image) {
+            //             addImage(image, true);
+            //         } else {
+            //             tlog::error() << tfm::format("Failed to load image from clipboard path: %s", path);
+            //         }
+            //     }
+            // } else
+            if (clip::has(clip::image_format())) {
+                clip::image clipImage;
+                if (!clip::get_image(clipImage)) {
+                    tlog::error() << "Failed to paste image from clipboard.";
+                } else {
+                    tlog::info() << "Loading image from clipboard...";
+                    stringstream imageStream;
+                    imageStream
+                        << "clip"
+                        << string(reinterpret_cast<const char*>(&clipImage.spec()), sizeof(clip::image_spec))
+                        << string(clipImage.data(), clipImage.spec().bytes_per_row * clipImage.spec().height)
+                        ;
+
+                    auto image = tryLoadImage(tfm::format("clipboard (%d)", ++mClipboardIndex), imageStream, "");
+                    if (image) {
+                        addImage(image, true);
+                    } else {
+                        tlog::error() << "Failed to load image from clipboard data.";
+                    }
+                }
+            }
         }
     }
 
@@ -683,6 +800,8 @@ bool ImageViewer::keyboardEvent(int key, int scancode, int action, int modifiers
             float scaleAmount = 1.0f;
             if (modifiers & GLFW_MOD_SHIFT) {
                 scaleAmount /= 10;
+            } else if (modifiers & SYSTEM_COMMAND_MOD) {
+                scaleAmount /= std::log2(1.1f);
             }
 
             if (key == GLFW_KEY_KP_SUBTRACT || key == GLFW_KEY_MINUS) {
@@ -749,7 +868,7 @@ bool ImageViewer::keyboardEvent(int key, int scancode, int action, int modifiers
                     setMetric(static_cast<EMetric>((metric() + 1) % NumMetrics));
                 }
             } else {
-                selectLayer(nextLayer(mCurrentLayer, Forward));
+                selectGroup(nextGroup(mCurrentGroup, Forward));
             }
         } else if (key == GLFW_KEY_LEFT || key == GLFW_KEY_A) {
             if (modifiers & GLFW_MOD_SHIFT) {
@@ -759,12 +878,16 @@ bool ImageViewer::keyboardEvent(int key, int scancode, int action, int modifiers
                     setMetric(static_cast<EMetric>((metric() - 1 + NumMetrics) % NumMetrics));
                 }
             } else {
-                selectLayer(nextLayer(mCurrentLayer, Backward));
+                selectGroup(nextGroup(mCurrentGroup, Backward));
             }
         }
     }
 
     return false;
+}
+
+void ImageViewer::focusWindow() {
+    glfwFocusWindow(mGLFWWindow);
 }
 
 void ImageViewer::drawContents() {
@@ -782,7 +905,7 @@ void ImageViewer::drawContents() {
     }
 
     if (newFocus) {
-        glfwFocusWindow(mGLFWWindow);
+        focusWindow();
     }
 
     // mTaskQueue contains jobs that should be executed on the main thread. It is useful for handling
@@ -794,20 +917,45 @@ void ImageViewer::drawContents() {
     } catch (runtime_error) {
     }
 
+    for (auto it = begin(mToBump); it != end(mToBump); ) {
+        auto& image = *it;
+        bool isShown = image == mCurrentImage || image == mCurrentReference;
+
+        // If the image is no longer shown, bump ID immediately. Otherwise, wait until canvas statistics were ready for over 200 ms.
+        if (!isShown || (std::chrono::steady_clock::now() - mImageCanvas->canvasStatistics()->becameReadyAt()) > std::chrono::milliseconds{200}) {
+            image->bumpId();
+            auto localIt = it;
+            ++it;
+            mToBump.erase(localIt);
+        } else {
+            ++it;
+        }
+    }
+
     if (mRequiresFilterUpdate) {
         updateFilter();
         mRequiresFilterUpdate = false;
     }
 
     if (mRequiresLayoutUpdate) {
+        Vector2i oldDraggedImageButtonPos{0, 0};
+        auto& buttons = mImageButtonContainer->children();
+        if (mIsDraggingImageButton) {
+            oldDraggedImageButtonPos = dynamic_cast<ImageButton*>(buttons[mDraggedImageButtonId])->position();
+        }
+        
         updateLayout();
         mRequiresLayoutUpdate = false;
+
+        if (mIsDraggingImageButton) {
+            dynamic_cast<ImageButton*>(buttons[mDraggedImageButtonId])->setPosition(oldDraggedImageButtonPos);
+        }
     }
 
     updateTitle();
 
     // Update histogram
-    static const string histogramTooltipBase = "Histogram of color values. Adapts to the currently chosen layer and error metric.";
+    static const string histogramTooltipBase = "Histogram of color values. Adapts to the currently chosen channel group and error metric.";
     auto lazyCanvasStatistics = mImageCanvas->canvasStatistics();
     if (lazyCanvasStatistics) {
         if (lazyCanvasStatistics->isReady()) {
@@ -845,6 +993,10 @@ void ImageViewer::insertImage(shared_ptr<Image> image, size_t index, bool shallS
         throw invalid_argument{"Image may not be null."};
     }
 
+    if (mIsDraggingImageButton && index <= mDraggedImageButtonId) {
+        ++mDraggedImageButtonId;
+    }
+
     for (auto button : mAnyImageButtons) {
         button->setEnabled(true);
     }
@@ -869,8 +1021,8 @@ void ImageViewer::insertImage(shared_ptr<Image> image, size_t index, bool shallS
     mImageButtonContainer->addChild((int)index, button);
     mImages.insert(begin(mImages) + index, image);
 
-    // The following call will show the footer if there is not an image
-    // with more than 1 layer.
+    // The following call will show thefooter if there is not an image
+    // with more than 1 group.
     setUiVisible(isUiVisible());
 
     // Ensure the new image button will have the correct visibility state.
@@ -879,16 +1031,54 @@ void ImageViewer::insertImage(shared_ptr<Image> image, size_t index, bool shallS
     requestLayoutUpdate();
 
     // First image got added, let's select it.
-    if (index == 0 || shallSelect) {
+    if ((index == 0 && mImages.size() == 1) || shallSelect) {
         selectImage(image);
         resizeToFitImage(image);
     }
+}
+
+void ImageViewer::moveImageInList(size_t oldIndex, size_t newIndex) {
+    if (oldIndex == newIndex) {
+        return;
+    }
+
+    TEV_ASSERT(oldIndex < mImages.size(), "oldIndex must be smaller than the number of images.");
+    TEV_ASSERT(newIndex < mImages.size(), "newIndex must be smaller than the number of images.");
+
+    auto* button = mImageButtonContainer->childAt((int)oldIndex);
+    button->incRef();
+    mImageButtonContainer->removeChild((int)oldIndex);
+    mImageButtonContainer->addChild((int)newIndex, button);
+    button->decRef();
+
+    auto startI = std::min(oldIndex, newIndex);
+    auto endI = std::max(oldIndex, newIndex);
+    for (size_t i = startI; i <= endI; ++i) {
+        auto* curButton = dynamic_cast<ImageButton*>(mImageButtonContainer->childAt((int)i));
+        curButton->setId(i+1);
+    }
+
+    auto img = mImages[oldIndex];
+    mImages.erase(mImages.begin() + oldIndex);
+    mImages.insert(mImages.begin() + newIndex, img);
+    
+    requestLayoutUpdate();
 }
 
 void ImageViewer::removeImage(shared_ptr<Image> image) {
     int id = imageId(image);
     if (id == -1) {
         return;
+    }
+
+    if (mIsDraggingImageButton) {
+        // If we're currently dragging the to-be-removed image, stop.
+        if ((size_t)id == mDraggedImageButtonId) {
+            requestLayoutUpdate();
+            mIsDraggingImageButton = false;
+        } else if ((size_t)id < mDraggedImageButtonId) {
+            --mDraggedImageButtonId;
+        }
     }
 
     auto nextCandidate = nextImage(image, Forward);
@@ -947,18 +1137,23 @@ void ImageViewer::removeAllImages() {
     }
 }
 
-void ImageViewer::reloadImage(shared_ptr<Image> image) {
+void ImageViewer::reloadImage(shared_ptr<Image> image, bool shallSelect) {
+    int currentId = imageId(mCurrentImage);
     int id = imageId(image);
     if (id == -1) {
         return;
     }
+
+    // If we already have the image selected, we must re-select it
+    // regardless of the `shallSelect` parameter.
+    shallSelect |= currentId == id;
 
     int referenceId = imageId(mCurrentReference);
 
     auto newImage = tryLoadImage(image->path(), image->channelSelector());
     if (newImage) {
         removeImage(image);
-        insertImage(newImage, id, true);
+        insertImage(newImage, id, shallSelect);
     }
 
     if (referenceId != -1) {
@@ -974,6 +1169,36 @@ void ImageViewer::reloadAllImages() {
 
     if (id != -1) {
         selectImage(mImages[id]);
+    }
+}
+
+void ImageViewer::updateImage(
+    const string& imageName,
+    bool shallSelect,
+    const string& channel,
+    int x, int y,
+    int width, int height,
+    const vector<float>& imageData
+) {
+    auto image = imageByName(imageName);
+    if (!image) {
+        tlog::warning() << "Image " << imageName << " could not be updated, because it does not exist.";
+        return;
+    }
+
+    image->updateChannel(channel, x, y, width, height, imageData);
+    if (shallSelect) {
+        selectImage(image);
+    }
+
+    // This image needs newly computed statistics... so give it a new ID.
+    // However, if the image is currently shown, we don't want to overwhelm
+    // the CPU, so we only launch new statistics computations every so often.
+    // These computations are scheduled from `drawContents` via the `mToBump` set.
+    if (image != mCurrentImage && image != mCurrentReference) {
+        image->bumpId();
+    } else {
+        mToBump.insert(image);
     }
 }
 
@@ -995,9 +1220,9 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
         mCurrentImage = nullptr;
         mImageCanvas->setImage(nullptr);
 
-        // Clear layer buttons
-        while (mLayerButtonContainer->childCount() > 0) {
-            mLayerButtonContainer->removeChild(mLayerButtonContainer->childCount() - 1);
+        // Clear group buttons
+        while (mGroupButtonContainer->childCount() > 0) {
+            mGroupButtonContainer->removeChild(mGroupButtonContainer->childCount() - 1);
         }
 
         requestLayoutUpdate();
@@ -1019,30 +1244,30 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
     mCurrentImage = image;
     mImageCanvas->setImage(mCurrentImage);
 
-    // Clear layer buttons
-    while (mLayerButtonContainer->childCount() > 0) {
-        mLayerButtonContainer->removeChild(mLayerButtonContainer->childCount() - 1);
+    // Clear group buttons
+    while (mGroupButtonContainer->childCount() > 0) {
+        mGroupButtonContainer->removeChild(mGroupButtonContainer->childCount() - 1);
     }
 
-    size_t numLayers = mCurrentImage->layers().size();
-    for (size_t i = 0; i < numLayers; ++i) {
-        string layer = layerName(i);
-        auto button = new ImageButton{mLayerButtonContainer, layer.empty() ? "<root>" : layer, false};
+    size_t numGroups = mCurrentImage->channelGroups().size();
+    for (size_t i = 0; i < numGroups; ++i) {
+        auto group = groupName(i);
+        auto button = new ImageButton{mGroupButtonContainer, group, false};
         button->setFontSize(15);
         button->setId(i + 1);
 
-        button->setSelectedCallback([this, layer]() {
-            selectLayer(layer);
+        button->setSelectedCallback([this, group]() {
+            selectGroup(group);
         });
     }
 
-    // Setting the filter again makes sure, that layers are correctly filtered.
+    // Setting the filter again makes sure, that groups are correctly filtered.
     setFilter(mFilter->value());
     updateLayout();
 
-    // This will automatically fall back to the root layer if the current
-    // layer isn't found.
-    selectLayer(mCurrentLayer);
+    // This will automatically fall back to the root group if the current
+    // group isn't found.
+    selectGroup(mCurrentGroup);
 
     // Ensure the currently active image button is always fully on-screen
     Widget* activeImageButton = nullptr;
@@ -1065,34 +1290,34 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
     }
 }
 
-void ImageViewer::selectLayer(string layer) {
-    // If the layer does not exist, select the first layer.
-    size_t id = (size_t)max(0, layerId(layer));
+void ImageViewer::selectGroup(string group) {
+    // If the group does not exist, select the first group.
+    size_t id = (size_t)max(0, groupId(group));
 
-    auto& buttons = mLayerButtonContainer->children();
+    auto& buttons = mGroupButtonContainer->children();
     for (size_t i = 0; i < buttons.size(); ++i) {
         dynamic_cast<ImageButton*>(buttons[i])->setIsSelected(i == id);
     }
 
-    mCurrentLayer = layerName(id);
-    mImageCanvas->setRequestedLayer(mCurrentLayer);
+    mCurrentGroup = groupName(id);
+    mImageCanvas->setRequestedChannelGroup(mCurrentGroup);
 
-    // Ensure the currently active layer button is always fully on-screen
-    Widget* activeLayerButton = nullptr;
-    for (Widget* widget : mLayerButtonContainer->children()) {
+    // Ensure the currently active group button is always fully on-screen
+    Widget* activeGroupButton = nullptr;
+    for (Widget* widget : mGroupButtonContainer->children()) {
         if (dynamic_cast<ImageButton*>(widget)->isSelected()) {
-            activeLayerButton = widget;
+            activeGroupButton = widget;
             break;
         }
     }
 
-    // Ensure the currently active layer button is always fully on-screen
-    if (activeLayerButton) {
-        mLayerButtonContainer->setPosition(Vector2i{
+    // Ensure the currently active group button is always fully on-screen
+    if (activeGroupButton) {
+        mGroupButtonContainer->setPosition(Vector2i{
             clamp(
-                mLayerButtonContainer->position().x(),
-                -activeLayerButton->position().x(),
-                mSize.x() - activeLayerButton->position().x() - activeLayerButton->width()
+                mGroupButtonContainer->position().x(),
+                -activeGroupButton->position().x(),
+                mSize.x() - activeGroupButton->position().x() - activeGroupButton->width()
             ),
             0
         });
@@ -1181,7 +1406,7 @@ void ImageViewer::normalizeExposureAndOffset() {
         return;
     }
 
-    auto channels = mImageCanvas->getChannels(*mCurrentImage);
+    auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
 
     float minimum = numeric_limits<float>::max();
     float maximum = numeric_limits<float>::min();
@@ -1308,8 +1533,8 @@ void ImageViewer::setUiVisible(bool shouldBeVisible) {
     bool shouldFooterBeVisible = false;
     for (const auto& image : mImages) {
         // There is no point showing the footer as long as no image
-        // has more than the root layer.
-        if (image->layers().size() > 1) {
+        // has more than the root group.
+        if (image->channelGroups().size() > 1) {
             shouldFooterBeVisible = true;
             break;
         }
@@ -1361,7 +1586,7 @@ void ImageViewer::openImageDialog() {
     }
 
     // Make sure we gain focus after seleting a file to be loaded.
-    glfwFocusWindow(mGLFWWindow);
+    focusWindow();
 }
 
 void ImageViewer::saveImageDialog() {
@@ -1371,7 +1596,7 @@ void ImageViewer::saveImageDialog() {
 
     path path = ensureUtf8(file_dialog(
     {
-        //{"exr",  "OpenEXR image"},
+        {"exr",  "OpenEXR image"},
         {"hdr",  "HDR image"},
         {"bmp",  "Bitmap Image File"},
         {"jpg",  "JPEG image"},
@@ -1396,37 +1621,37 @@ void ImageViewer::saveImageDialog() {
     }
 
     // Make sure we gain focus after seleting a file to be loaded.
-    glfwFocusWindow(mGLFWWindow);
+    focusWindow();
 }
 
 void ImageViewer::updateFilter() {
     string filter = mFilter->value();
     string imagePart = filter;
-    string layerPart = "";
+    string groupPart = "";
 
     auto colonPos = filter.find_last_of(':');
     if (colonPos != string::npos) {
         imagePart = filter.substr(0, colonPos);
-        layerPart = filter.substr(colonPos + 1);
+        groupPart = filter.substr(colonPos + 1);
     }
 
     // Image filtering
     {
         // Checks whether an image matches the filter.
         // This is the case if the image name matches the image part
-        // and at least one of the image's layers matches the layer part.
+        // and at least one of the image's groups matches the group part.
         auto doesImageMatch = [&](const shared_ptr<Image>& image) {
             bool doesMatch = matchesFuzzyOrRegex(image->name(), imagePart, useRegex());
             if (doesMatch) {
-                bool anyLayersMatch = false;
-                for (const auto& layer : image->layers()) {
-                    if (matchesFuzzyOrRegex(layer, layerPart, useRegex())) {
-                        anyLayersMatch = true;
+                bool anyGroupsMatch = false;
+                for (const auto& group : image->channelGroups()) {
+                    if (matchesFuzzyOrRegex(group.name, groupPart, useRegex())) {
+                        anyGroupsMatch = true;
                         break;
                     }
                 }
 
-                if (!anyLayersMatch) {
+                if (!anyGroupsMatch) {
                     doesMatch = false;
                 }
             }
@@ -1510,21 +1735,20 @@ void ImageViewer::updateFilter() {
         }
     }
 
-    // Layer filtering
-    if (mCurrentImage)
-    {
+    // Group filtering
+    if (mCurrentImage) {
         size_t id = 1;
-        const auto& buttons = mLayerButtonContainer->children();
+        const auto& buttons = mGroupButtonContainer->children();
         for (Widget* button : buttons) {
             ImageButton* ib = dynamic_cast<ImageButton*>(button);
-            ib->setVisible(matchesFuzzyOrRegex(ib->caption(), layerPart, useRegex()));
+            ib->setVisible(matchesFuzzyOrRegex(ib->caption(), groupPart, useRegex()));
             if (ib->visible()) {
                 ib->setId(id++);
             }
         }
 
-        if (!matchesFuzzyOrRegex(mCurrentLayer, layerPart, useRegex())) {
-            selectLayer(nthVisibleLayer(0));
+        if (!matchesFuzzyOrRegex(mCurrentGroup, groupPart, useRegex())) {
+            selectGroup(nthVisibleGroup(0));
         }
     }
 
@@ -1559,64 +1783,61 @@ void ImageViewer::updateLayout() {
 void ImageViewer::updateTitle() {
     string caption = "tev";
     if (mCurrentImage) {
-        auto channels = mImageCanvas->getChannels(*mCurrentImage);
+        auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
         // Remove duplicates
         channels.erase(unique(begin(channels), end(channels)), end(channels));
 
-        auto readableChannels = channels;
-        transform(begin(readableChannels), end(readableChannels), begin(readableChannels), Channel::tail);
-        string channelsString = join(readableChannels, ",");
-        caption = mCurrentImage->shortName();
+        auto channelTails = channels;
+        transform(begin(channelTails), end(channelTails), begin(channelTails), Channel::tail);
 
-        if (mCurrentLayer.empty()) {
-            caption += string{" – "} + channelsString;
-        } else {
-            caption += string{" – "} + mCurrentLayer;
-            if (readableChannels.size() == 1) {
-                caption += string{"."} + channelsString;
-            } else {
-                caption += string{".("} + channelsString + ")";
-            }
-        }
+        caption = mCurrentImage->shortName();
+        caption += string{" – "} + mCurrentGroup;
 
         vector<float> values = mImageCanvas->getValuesAtNanoPos(mousePos() - mImageCanvas->position(), channels);
         Vector2i imageCoords = mImageCanvas->getImageCoords(*mCurrentImage, mousePos() - mImageCanvas->position());
-        TEV_ASSERT(values.size() >= readableChannels.size(), "Should obtain a value for every existing channel.");
+        TEV_ASSERT(values.size() >= channelTails.size(), "Should obtain a value for every existing channel.");
 
         string valuesString;
-        for (size_t i = 0; i < readableChannels.size(); ++i) {
+        for (size_t i = 0; i < channelTails.size(); ++i) {
             valuesString += tfm::format("%.2f,", values[i]);
         }
         valuesString.pop_back();
         valuesString += " / 0x";
-        for (size_t i = 0; i < readableChannels.size(); ++i) {
-            float tonemappedValue = readableChannels[i] == "A" ? values[i] : toSRGB(values[i]);
+        for (size_t i = 0; i < channelTails.size(); ++i) {
+            float tonemappedValue = channelTails[i] == "A" ? values[i] : toSRGB(values[i]);
             unsigned char discretizedValue = (char)(tonemappedValue * 255 + 0.5f);
             valuesString += tfm::format("%02X", discretizedValue);
         }
 
         caption += tfm::format(" – @(%d,%d)%s", imageCoords.x(), imageCoords.y(), valuesString);
+        caption += tfm::format(" – %d%%", (int)std::round(mImageCanvas->extractScale() * 100));
     }
 
     setCaption(caption);
 }
 
-string ImageViewer::layerName(size_t index) {
+string ImageViewer::groupName(size_t index) {
     if (!mCurrentImage) {
         return "";
     }
 
-    return mCurrentImage->layers().at(index);
+    return mCurrentImage->channelGroups().at(index).name;
 }
 
-int ImageViewer::layerId(const string& layer) const {
+int ImageViewer::groupId(const string& groupName) const {
     if (!mCurrentImage) {
         return 0;
     }
 
-    const auto& layers = mCurrentImage->layers();
-    auto pos = static_cast<size_t>(distance(begin(layers), find(begin(layers), end(layers), layer)));
-    return pos >= layers.size() ? -1 : (int)pos;
+    const auto& groups = mCurrentImage->channelGroups();
+    size_t pos = 0;
+    for (; pos < groups.size(); ++pos) {
+        if (groups[pos].name == groupName) {
+            break;
+        }
+    }
+
+    return pos >= groups.size() ? -1 : (int)pos;
 }
 
 int ImageViewer::imageId(const shared_ptr<Image>& image) const {
@@ -1624,29 +1845,36 @@ int ImageViewer::imageId(const shared_ptr<Image>& image) const {
     return pos >= mImages.size() ? -1 : (int)pos;
 }
 
-string ImageViewer::nextLayer(const string& layer, EDirection direction) {
-    if (mLayerButtonContainer->childCount() == 0) {
-        return mCurrentLayer;
+int ImageViewer::imageId(const string& imageName) const {
+    auto pos = static_cast<size_t>(distance(begin(mImages), find_if(begin(mImages), end(mImages), [&](const shared_ptr<Image>& image) {
+        return image->name() == imageName;
+    })));
+    return pos >= mImages.size() ? -1 : (int)pos;
+}
+
+string ImageViewer::nextGroup(const string& group, EDirection direction) {
+    if (mGroupButtonContainer->childCount() == 0) {
+        return mCurrentGroup;
     }
 
     int dir = direction == Forward ? 1 : -1;
 
-    // If the layer does not exist, start at index 0.
-    int startId = max(0, layerId(layer));
+    // If the group does not exist, start at index 0.
+    int startId = max(0, groupId(group));
 
     int id = startId;
     do {
-        id = (id + mLayerButtonContainer->childCount() + dir) % mLayerButtonContainer->childCount();
-    } while (!mLayerButtonContainer->childAt(id)->visible() && id != startId);
+        id = (id + mGroupButtonContainer->childCount() + dir) % mGroupButtonContainer->childCount();
+    } while (!mGroupButtonContainer->childAt(id)->visible() && id != startId);
 
-    return layerName(id);
+    return groupName(id);
 }
 
-string ImageViewer::nthVisibleLayer(size_t n) {
-    string lastVisible = mCurrentLayer;
-    for (int i = 0; i < mLayerButtonContainer->childCount(); ++i) {
-        if (mLayerButtonContainer->childAt(i)->visible()) {
-            lastVisible = layerName(i);
+string ImageViewer::nthVisibleGroup(size_t n) {
+    string lastVisible = mCurrentGroup;
+    for (int i = 0; i < mGroupButtonContainer->childCount(); ++i) {
+        if (mGroupButtonContainer->childAt(i)->visible()) {
+            lastVisible = groupName(i);
             if (n == 0) {
                 break;
             }
@@ -1686,6 +1914,15 @@ shared_ptr<Image> ImageViewer::nthVisibleImage(size_t n) {
         }
     }
     return lastVisible;
+}
+
+shared_ptr<Image> ImageViewer::imageByName(const string& imageName) {
+    int id = imageId(imageName);
+    if (id != -1) {
+        return mImages[id];
+    } else {
+        return nullptr;
+    }
 }
 
 TEV_NAMESPACE_END

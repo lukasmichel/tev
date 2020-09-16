@@ -7,57 +7,63 @@
 #include <stb_image.h>
 
 using namespace Eigen;
+using namespace filesystem;
 using namespace std;
 
 TEV_NAMESPACE_BEGIN
 
-bool StbiImageLoader::canLoadFile(ifstream&) const {
+bool StbiImageLoader::canLoadFile(istream&) const {
     // Pretend you can load any file and throw exception on failure.
     // TODO: Add proper check.
     return true;
 }
 
-ImageData StbiImageLoader::load(ifstream& f, const filesystem::path&, const string& channelSelector) const {
+ImageData StbiImageLoader::load(istream& iStream, const path&, const string& channelSelector) const {
     ImageData result;
     ThreadPool threadPool;
 
     static const stbi_io_callbacks callbacks = {
         // Read
         [](void* context, char* data, int size) {
-            auto stream = reinterpret_cast<ifstream*>(context);
+            auto stream = reinterpret_cast<istream*>(context);
             stream->read(data, size);
             return (int)stream->gcount();
         },
         // Seek
         [](void* context, int size) {
-            reinterpret_cast<ifstream*>(context)->seekg(size, ios_base::cur);
+            reinterpret_cast<istream*>(context)->seekg(size, ios_base::cur);
         },
         // EOF
         [](void* context) {
-            return (int)!!(*reinterpret_cast<ifstream*>(context));
+            return (int)!!(*reinterpret_cast<istream*>(context));
         },
     };
 
     void* data;
     int numChannels;
     Vector2i size;
-    bool isHdr = stbi_is_hdr_from_callbacks(&callbacks, &f) != 0;
-    f.clear();
-    f.seekg(0);
+    bool isHdr = stbi_is_hdr_from_callbacks(&callbacks, &iStream) != 0;
+    iStream.clear();
+    iStream.seekg(0);
 
     if (isHdr) {
-        data = stbi_loadf_from_callbacks(&callbacks, &f, &size.x(), &size.y(), &numChannels, 0);
+        data = stbi_loadf_from_callbacks(&callbacks, &iStream, &size.x(), &size.y(), &numChannels, 0);
     } else {
-        data = stbi_load_from_callbacks(&callbacks, &f, &size.x(), &size.y(), &numChannels, 0);
+        data = stbi_load_from_callbacks(&callbacks, &iStream, &size.x(), &size.y(), &numChannels, 0);
     }
 
     if (!data) {
-        throw invalid_argument{"Could not load texture data"};
+        throw invalid_argument{tfm::format("%s", stbi_failure_reason())};
+    }
+
+    if (size.x() == 0 || size.y() == 0) {
+        throw invalid_argument{"Image has zero pixels."};
     }
 
     ScopeGuard dataGuard{[data] { stbi_image_free(data); }};
 
     vector<Channel> channels = makeNChannels(numChannels, size);
+    int alphaChannelIndex = 3;
 
     auto numPixels = (DenseIndex)size.x() * size.y();
     if (isHdr) {
@@ -73,7 +79,11 @@ ImageData StbiImageLoader::load(ifstream& f, const filesystem::path&, const stri
         threadPool.parallelFor<DenseIndex>(0, numPixels, [&](DenseIndex i) {
             int baseIdx = i * numChannels;
             for (int c = 0; c < numChannels; ++c) {
-                channels[c].at(i) = toLinear((typedData[baseIdx + c]) / 255.0f);
+                if (c == alphaChannelIndex) {
+                    channels[c].at(i) = (typedData[baseIdx + c]) / 255.0f;
+                } else {
+                    channels[c].at(i) = toLinear((typedData[baseIdx + c]) / 255.0f);
+                }
             }
         });
     }
