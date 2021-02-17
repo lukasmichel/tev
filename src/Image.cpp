@@ -157,7 +157,8 @@ vector<string> Image::channelsInGroup(const string& groupName) const {
         }
     }
 
-    return {};
+    /// @todo make this more robust
+    return { "R", "G", "B" };
 }
 
 vector<ChannelGroup> Image::getGroupedChannels(const string& layerName) const {
