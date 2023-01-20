@@ -194,8 +194,12 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
         makeTonemapButton("FC",    [this]() { setTonemap(ETonemap::FalseColor); });
         makeTonemapButton("+/-",   [this]() { setTonemap(ETonemap::PositiveNegative); });
         makeTonemapButton("C",     [this]() { setTonemap(ETonemap::Complex); });
+        makeTonemapButton("Vector",     [this]() { setTonemap(ETonemap::Vector); });
+        makeTonemapButton("Flow",     [this]() { setTonemap(ETonemap::Flow); });
+        makeTonemapButton("FC_PPG",    [this]() { setTonemap(ETonemap::FalseColorPPG); });
 
-        setTonemap(ETonemap::SRGB);
+
+      setTonemap(ETonemap::SRGB);
 
         mTonemapButtonContainer->setTooltip(
             "Tonemap operator selection:\n\n"
@@ -210,7 +214,19 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
             "False-color visualization\n\n"
 
             "+/-\n"
-            "Positive=Green, Negative=Red"
+            "Positive=Green, Negative=Red\n\n"
+
+            "C\n"
+            "Complex?\n\n"
+
+            "Vector\n"
+            "Visualize vectors using their components\n"
+            "as color values. Vectors are normalized\n"
+            "before mapping. [0, 0.5] RGB range for negative\n"
+            "values, [0.5, 1] for positive values"
+
+            "FC_PPG\n"
+            "Use the same tone mapping as in PPG implementation."
         );
     }
 
@@ -604,7 +620,7 @@ bool ImageViewer::mouseMotionEvent(const Vector2i& p, const Vector2i& rel, int b
                 break;
             }
         }
-        
+
         dynamic_cast<ImageButton*>(buttons[mDraggedImageButtonId])->setPosition(relMousePos - mDraggingStartPosition.cast<int>());
     }
 
@@ -943,7 +959,7 @@ void ImageViewer::drawContents() {
         if (mIsDraggingImageButton) {
             oldDraggedImageButtonPos = dynamic_cast<ImageButton*>(buttons[mDraggedImageButtonId])->position();
         }
-        
+
         updateLayout();
         mRequiresLayoutUpdate = false;
 
@@ -1061,7 +1077,7 @@ void ImageViewer::moveImageInList(size_t oldIndex, size_t newIndex) {
     auto img = mImages[oldIndex];
     mImages.erase(mImages.begin() + oldIndex);
     mImages.insert(mImages.begin() + newIndex, img);
-    
+
     requestLayoutUpdate();
 }
 

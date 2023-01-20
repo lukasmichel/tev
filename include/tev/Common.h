@@ -188,6 +188,9 @@ enum ETonemap : int {
     FalseColor,
     PositiveNegative,
     Complex,
+    Vector,
+    Flow,
+    FalseColorPPG,
 
     // This enum value should never be used directly.
     // It facilitates looping over all members of this enum.

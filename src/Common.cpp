@@ -142,7 +142,13 @@ ETonemap toTonemap(string name) {
         return PositiveNegative;
     } else if (name == "COMPLEX") {
         return Complex;
-    } else {
+    }else if (name == "VECTOR") {
+        return Vector;
+    }else if (name == "FLOW") {
+        return Flow;
+    }else if (name=="FALSECOLORPPG" || name =="FC_PPG"){
+      return FalseColorPPG;
+    }  else {
         return SRGB;
     }
 }
